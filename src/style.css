@@ -1,0 +1,105 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ui-bg: #F5F6F8;
+  --ui-panel: #FFFFFF;
+  --ui-border: rgba(15, 23, 42, 0.08);
+  --ui-text: #1B1D24;
+  --ui-muted: #6B7280;
+}
+
+html.dark {
+  --ui-bg: #12131A;
+  --ui-panel: #191A20;
+  --ui-border: rgba(255, 255, 255, 0.08);
+  --ui-text: #E7E9EF;
+  --ui-muted: #9AA0AE;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--ui-bg);
+  color: var(--ui-text);
+  font-family: 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* 预览区棋盘格：表示透明底 */
+.checkerboard {
+  background-color: #e9eaee;
+  background-image:
+    linear-gradient(45deg, #dcdee4 25%, transparent 25%),
+    linear-gradient(-45deg, #dcdee4 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #dcdee4 75%),
+    linear-gradient(-45deg, transparent 75%, #dcdee4 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+}
+
+html.dark .checkerboard {
+  background-color: #171922;
+  background-image:
+    linear-gradient(45deg, #1f2230 25%, transparent 25%),
+    linear-gradient(-45deg, #1f2230 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #1f2230 75%),
+    linear-gradient(-45deg, transparent 75%, #1f2230 75%);
+}
+
+/* 细滚动条 */
+.thin-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: rgba(120, 130, 150, 0.35);
+  border-radius: 999px;
+}
+.thin-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.field-label {
+  @apply text-xs font-medium text-[color:var(--ui-muted)];
+}
+
+.field-input {
+  @apply w-full rounded-lg border px-3 py-2 text-sm outline-none transition;
+  border-color: var(--ui-border);
+  background: var(--ui-bg);
+  color: var(--ui-text);
+}
+
+.field-input:focus {
+  border-color: #6366F1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.14);
+}
+
+.seg {
+  @apply inline-flex items-center rounded-lg p-0.5 gap-0.5;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+}
+
+.seg > button {
+  @apply rounded-md px-2.5 py-1 text-xs transition;
+  color: var(--ui-muted);
+}
+
+.seg > button[data-active='true'] {
+  background: var(--ui-panel);
+  color: var(--ui-text);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+}

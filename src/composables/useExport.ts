@@ -1,0 +1,81 @@
+import { computed, ref } from 'vue'
+import type { CardData, CardStyle } from '@/types/card'
+import type { ExportResult, ExportScale } from '@/types/export'
+import { renderElementToCanvas, canvasToBlob } from '@/utils/dom-to-image'
+import { buildFileName, downloadBlob } from '@/utils/filename'
+import { copyBlobToClipboard } from '@/utils/clipboard'
+
+export interface ExportTarget {
+  /** 卡片根节点（固定 1:1 像素尺寸） */
+  element: HTMLElement | null
+  card: CardData
+  style: CardStyle
+}
+
+export function useExport() {
+  const exporting = ref(false)
+  const lastError = ref<string | null>(null)
+  const lastResult = ref<ExportResult | null>(null)
+
+  const scales: ExportScale[] = [1, 2, 3]
+  const target = ref<ExportTarget | null>(null)
+
+  function register(t: ExportTarget) {
+    target.value = t
+  }
+
+  async function render(scale: ExportScale): Promise<ExportResult> {
+    const t = target.value
+    if (!t?.element) throw new Error('卡片尚未挂载')
+    const { width, height } = t.style.size
+    const canvas = await renderElementToCanvas(t.element, { scale, width, height })
+    const blob = await canvasToBlob(canvas)
+    return {
+      blob,
+      width: Math.round(width * scale),
+      height: Math.round(height * scale),
+      filename: buildFileName(t.card.title, new Date(), 'png'),
+    }
+  }
+
+  async function exportPng(scale: ExportScale = 1): Promise<ExportResult | null> {
+    exporting.value = true
+    lastError.value = null
+    try {
+      const result = await render(scale)
+      downloadBlob(result.blob, result.filename)
+      lastResult.value = result
+      return result
+    } catch (err) {
+      lastError.value = err instanceof Error ? err.message : '导出失败'
+      return null
+    } finally {
+      exporting.value = false
+    }
+  }
+
+  async function copyToClipboard(scale: ExportScale = 1): Promise<boolean> {
+    exporting.value = true
+    lastError.value = null
+    try {
+      const result = await render(scale)
+      const ok = await copyBlobToClipboard(result.blob)
+      if (!ok) lastError.value = '当前浏览器不支持复制图片，请改用下载'
+      return ok
+    } catch (err) {
+      lastError.value = err instanceof Error ? err.message : '复制失败'
+      return false
+    } finally {
+      exporting.value = false
+    }
+  }
+
+  const sizeLabel = computed(() => {
+    const s = target.value?.style.size
+    return s ? `${s.width} × ${s.height}` : ''
+  })
+
+  return { exporting, lastError, lastResult, scales, register, exportPng, copyToClipboard, sizeLabel }
+}
+
+export type ExportStore = ReturnType<typeof useExport>

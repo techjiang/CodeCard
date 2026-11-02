@@ -1,0 +1,17 @@
+main:
+  push:
+    - stages:
+        - name: install
+          script: npm ci
+        - name: check
+          script: npm run typecheck && npm run test && npm run build
+          artifacts:
+            - dist
+
+$:
+  pull_request:
+    - stages:
+        - name: install
+          script: npm ci
+        - name: check
+          script: npm run typecheck && npm run test && npm run build
