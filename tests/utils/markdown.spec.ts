@@ -42,4 +42,41 @@ describe('中文断行', () => {
     const nodes = parseInline('`Object.defineProperty`', false)
     expect(nodes[0]).toEqual({ type: 'code', value: 'Object.defineProperty' })
   })
+
+  test('代码块语言标记与内容保留', () => {
+    const [block] = parseMarkdown('```typescript\nconst a = 1\n```', false)
+    expect(block).toEqual({ type: 'code', language: 'typescript', value: 'const a = 1' })
+  })
+
+  test('分隔线单独成块', () => {
+    expect(parseMarkdown('---')[0].type).toBe('divider')
+    expect(parseMarkdown('***')[0].type).toBe('divider')
+  })
+
+  test('多行引用合并为一段', () => {
+    const [quote] = parseMarkdown('> 第一句\n> 第二句', false)
+    expect(quote.type === 'quote' && quote.inlines.map((n) => n.value).join('')).toContain('第一句 第二句')
+  })
+
+  test('连续非空行合并成段落，不额外切块', () => {
+    const blocks = parseMarkdown('第一行\n第二行', false)
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].type).toBe('paragraph')
+  })
+
+  test('CRLF 与空输入安全', () => {
+    expect(parseMarkdown('## 标题\r\n\r\n正文', false).map((b) => b.type)).toEqual(['heading', 'paragraph'])
+    expect(parseMarkdown('')).toEqual([])
+  })
+
+  test('有序列表遇到无序项即截止', () => {
+    const blocks = parseMarkdown('1. 一\n2. 二\n- 三', false)
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].type === 'list' && blocks[0].ordered).toBe(true)
+    expect(blocks[1].type === 'list' && blocks[1].ordered).toBe(false)
+  })
+
+  test('列表与代码块也能转纯文本', () => {
+    expect(markdownToPlain('- 一\n- 二\n\n```\nconst a = 1\n```')).toBe('一 二\nconst a = 1')
+  })
 })

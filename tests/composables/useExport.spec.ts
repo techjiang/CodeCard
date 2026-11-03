@@ -65,4 +65,41 @@ describe('导出流程', () => {
     expect(ok).toBe(false)
     expect(store.lastError.value).toContain('复制')
   })
+
+  test('可导出横版与竖版尺寸', async () => {
+    const store = useExport()
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    store.register({
+      element: el,
+      card: { ...DEFAULT_CARD },
+      style: { ...DEFAULT_STYLE, size: { preset: 'landscape', width: 1200, height: 630 } },
+    })
+    const result = await store.exportPng(2)
+    expect([result?.width, result?.height]).toEqual([2400, 1260])
+    expect(store.sizeLabel.value).toBe('1200 × 630')
+  })
+
+  test('渲染抛错时记录错误并复位状态', async () => {
+    const store = setup()
+    const broken = document.createElement('canvas')
+    document.createElement('div')
+    const originalGet = HTMLCanvasElement.prototype.getContext
+    HTMLCanvasElement.prototype.getContext = vi.fn(() => null) as never
+    try {
+      const result = await store.exportPng(1)
+      expect(result).toBeNull()
+      expect(store.lastError.value).toContain('Canvas')
+      expect(store.exporting.value).toBe(false)
+    } finally {
+      HTMLCanvasElement.prototype.getContext = originalGet
+    }
+    expect(broken).toBeTruthy()
+  })
+
+  test('导出成功后记录结果', async () => {
+    const store = setup()
+    await store.exportPng(3)
+    expect(store.lastResult.value?.width).toBe(3240)
+  })
 })

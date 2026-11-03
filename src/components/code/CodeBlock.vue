@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { highlight, getHighlightTheme } from '@/utils/highlight'
+import MarkdownContent from '@/components/preview/parts/MarkdownContent.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -22,11 +23,26 @@ const props = withDefaults(
 )
 
 const theme = computed(() => getHighlightTheme(props.themeId))
-const lines = computed(() => highlight(props.code ?? '', props.language))
+
+/**
+ * 选了「代码片段」但粘进来的是 Markdown 或散文，按代码高亮出来只是一坨灰字。
+ * 这种情况不再硬套高亮，交给 Markdown 渲染：用户选的是什么类型不重要，能看懂才重要。
+ */
+const prose = computed(() => {
+  const text = props.code ?? ''
+  if (!text.trim()) return false
+  if (props.language && props.language !== 'text') return false
+  return /(^|\n)\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s|```)/.test(text)
+})
+
+const lines = computed(() => highlight(props.code ?? '', prose.value ? 'text' : props.language))
 </script>
 
 <template>
-  <div class="cc-code" :style="{ background: theme.background, color: theme.foreground }">
+  <div v-if="prose" class="cc-prose">
+    <MarkdownContent :content="code" tone="dark" :font-size="fontSize * 0.96" />
+  </div>
+  <div v-else class="cc-code" :style="{ background: theme.background, color: theme.foreground }">
     <div v-if="showChrome" class="cc-code__chrome" :class="{ 'cc-code__chrome--light': theme.mode === 'light' }">
       <span class="dot" style="background: #ff5f57" />
       <span class="dot" style="background: #febc2e" />
@@ -51,6 +67,9 @@ const lines = computed(() => highlight(props.code ?? '', props.language))
 </template>
 
 <style scoped>
+.cc-prose {
+  color: inherit;
+}
 .cc-code {
   border-radius: inherit;
   overflow: hidden;

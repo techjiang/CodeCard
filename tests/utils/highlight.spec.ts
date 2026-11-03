@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { getHighlightTheme, HIGHLIGHT_THEMES, highlight, LANGUAGES, tokenizeLine } from '@/utils/highlight'
+import { getHighlightTheme, HIGHLIGHT_THEMES, highlight, LANGUAGES, tokenizeLine, tokenStyle } from '@/utils/highlight'
 
 const flatten = (lines: ReturnType<typeof highlight>) => lines.map((l) => l.map((t) => t.value).join(''))
 
@@ -61,5 +61,78 @@ describe('CodeHighlight', () => {
   test('SQL 关键字大小写不敏感', () => {
     const tokens = tokenizeLine('SELECT * FROM users', 'sql')
     expect(tokens.filter((t) => t.type === 'keyword').map((t) => t.value)).toEqual(['SELECT', 'FROM'])
+  })
+
+  test('HTML 标签、属性、字符串各自成 token', () => {
+    const [line] = highlight('<a href="/x">链接</a>', 'html')
+    expect(line.filter((t) => t.type === 'keyword').map((t) => t.value)).toEqual(['a', 'a'])
+    expect(line.find((t) => t.type === 'attr')?.value).toBe('href')
+    expect(line.find((t) => t.type === 'string')?.value).toBe('"/x"')
+    expect(line.map((t) => t.value).join('')).toBe('<a href="/x">链接</a>')
+  })
+
+  test('CSS 选择器、属性、颜色、数值', () => {
+    const [line] = highlight('.card { color: #fff; width: 12px; }', 'css')
+    const byType = (type: string) => line.filter((t) => t.type === type).map((t) => t.value)
+    expect(byType('tag')).toContain('.card')
+    expect(byType('attr')).toContain('color')
+    expect(byType('number')).toEqual(expect.arrayContaining(['#fff', '12px']))
+    expect(line.map((t) => t.value).join('')).toBe('.card { color: #fff; width: 12px; }')
+  })
+
+  test('Markdown 标题、列表、引用、行内样式', () => {
+    expect(highlight('## 标题', 'markdown')[0]).toEqual([{ type: 'keyword', value: '## 标题' }])
+    expect(highlight('- 列表', 'markdown')[0][0].type).toBe('operator')
+    expect(highlight('> 引用', 'markdown')[0][0].type).toBe('comment')
+    const inline = highlight('用 `code` 和 **重点** 和 [链接](u)', 'markdown')[0]
+    expect(inline.some((t) => t.type === 'string' && t.value === '`code`')).toBe(true)
+    expect(inline.some((t) => t.type === 'type' && t.value === '**重点**')).toBe(true)
+  })
+
+  test('纯文本语言原样按行返回', () => {
+    const lines = highlight('原样\n保留', 'text')
+    expect(lines).toEqual([[{ type: 'plain', value: '原样' }], [{ type: 'plain', value: '保留' }]])
+  })
+
+  test('函数名与大写类型分别着色', () => {
+    const [line] = highlight('const el = document.querySelector(".a")\nnew Proxy(target)', 'javascript')
+    expect(line.some((t) => t.type === 'function' && t.value === 'querySelector')).toBe(true)
+    const second = highlight('new Proxy(target)', 'javascript')[0]
+    expect(second.some((t) => t.type === 'type' && t.value === 'Proxy')).toBe(true)
+  })
+
+  test('数字支持十六进制与小数', () => {
+    const [line] = highlight('const a = 0xFF; const b = 3.14', 'javascript')
+    expect(line.filter((t) => t.type === 'number').map((t) => t.value)).toEqual(['0xFF', '3.14'])
+  })
+
+  test('字符串支持转义引号', () => {
+    const [line] = highlight('const s = "a\\"b"', 'javascript')
+    expect(line.find((t) => t.type === 'string')?.value).toBe('"a\\"b"')
+  })
+
+  test('python 与 bash 用 # 注释，yaml 只在空白后算注释', () => {
+    expect(highlight('# 注释', 'python')[0][0].type).toBe('comment')
+    expect(highlight('# 注释', 'bash')[0][0].type).toBe('comment')
+    expect(highlight('key: 1 # 注释', 'yaml')[0].some((t) => t.type === 'comment')).toBe(true)
+    expect(highlight('key: 1', 'yaml')[0].some((t) => t.type === 'comment')).toBe(false)
+  })
+
+  test('sql 的 -- 注释', () => {
+    const [line] = highlight('select 1 -- 注释', 'sql')
+    expect(line.find((t) => t.type === 'comment')?.value).toBe('-- 注释')
+  })
+
+  test('CRLF 与空输入安全', () => {
+    expect(highlight('a\r\nb', 'javascript').map((l) => l.map((t) => t.value).join(''))).toEqual(['a', 'b'])
+    expect(highlight('', 'javascript')).toHaveLength(1)
+  })
+
+  test('注释 token 用斜体，未知 token 回退前景色', () => {
+    const theme = getHighlightTheme('dracula')
+    expect(tokenStyle(theme, 'comment').fontStyle).toBe('italic')
+    expect(tokenStyle(theme, 'regex').color).toBe(theme.colors.regex)
+    const bare = { ...theme, colors: {} as never }
+    expect(tokenStyle(bare, 'keyword').color).toBe(theme.foreground)
   })
 })
