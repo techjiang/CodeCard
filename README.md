@@ -74,7 +74,7 @@ npm run typecheck # 类型检查
 | 样式 | Tailwind CSS 3 | 设计令牌走 `tailwind.config.ts` |
 | 导出 | 自研 DOM → Canvas | 不走 html2canvas，体积小、结果可预测 |
 | 高亮 | 手写分词器 | 按行输出 token，行号对齐稳、截图不抖 |
-| 测试 | Vitest + jsdom | 61 个用例 |
+| 测试 | Vitest + jsdom | 159 个用例，语句覆盖 94% |
 
 ### 为什么不用 html2canvas
 
@@ -126,6 +126,19 @@ src/
 ## 隐私
 
 不收集任何数据，不发起任何网络请求。卡片内容、样式和历史记录只存在你自己的浏览器 localStorage 里，最多保留 20 条历史。
+
+## 测试
+
+```bash
+npm run test            # 159 个用例
+npm run test:coverage   # 语句覆盖 94%
+```
+
+jsdom 不做布局，`getBoundingClientRect` 恒为 0，导出渲染器的用例靠伪造 rect + 记录 Canvas 绘制调用来断言：
+
+- **导出渲染器**（`tests/utils/dom-to-image.spec.ts`）：渐变坐标换算、圆角裁剪、边框内缩、换行与对齐、flex 子项不粘连、缩放折算、SVG 装饰加载失败兜底
+- **模板**（`tests/components/templates.spec.ts`）：12 套模板 × 6 种卡片类型全组合渲染，外加三种尺寸预设
+- **预览容器**：自动缩放比例、`ready` 事件、切模板与切尺寸重新测量
 
 ## 开发约定
 
