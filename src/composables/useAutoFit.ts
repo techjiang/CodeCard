@@ -1,6 +1,7 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 
-const MIN_SCALE = 0.5
+/** 缩小下限：字缩到看不清就没意义了，宁可让导出渲染器在词边界断开 */
+const MIN_SCALE = 0.28
 const MAX_GROW = 1.6
 /** 放大后正文每行至少要有这么多字，否则宁可留白也别排成一列字 */
 const MIN_CHARS_PER_LINE = 16
@@ -67,9 +68,9 @@ export function useAutoFit(root: Ref<HTMLElement | null>, deps: () => unknown) {
   let pending = false
 
   /** 内容是否落在容器内（高度按自然高度算，宽度看有没有横向溢出） */
-  function fits(el: HTMLElement, slack = 1): boolean {
+  function fits(el: HTMLElement, target: number, slack = 1): boolean {
     const natural = naturalTotal(el)
-    if (!natural || natural > el.clientHeight + slack) return false
+    if (!natural || natural > target + slack) return false
     const content = el.querySelector<HTMLElement>('.cc-content') ?? el.firstElementChild
     if (!content) return true
     if (content.scrollWidth > content.clientWidth + 2) return false
@@ -94,34 +95,36 @@ export function useAutoFit(root: Ref<HTMLElement | null>, deps: () => unknown) {
     scale.value = 1
     await nextTick()
 
-    const target = el.clientHeight
+    const cs = getComputedStyle(el)
+    const target = el.clientHeight - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0)
     const base = naturalTotal(el)
     if (base > target + 1) {
-      const guess = clamp((target / base) * 0.99)
-      scale.value = guess
-      await nextTick()
-      if (!fits(el)) {
-        for (let i = 1; i <= MAX_STEPS; i++) {
-          const next = clamp(Math.round((guess - i * 0.02) * 100) / 100)
-          scale.value = next
-          await nextTick()
-          if (fits(el) || next <= MIN_SCALE) return
-        }
+      // 高度随字号单调增长，按比例缩通常一两次就到位。
+      // 留 6% 余量：断行按整字取整、行末标点还挂在行盒外，估出来的高度总是偏乐观。
+      let g = clamp((target / base) * 0.94)
+      // 兜底逐档往下试：断行不是严格线性的，有的档位缩 2% 不降行，再缩 2% 就整整少一行。
+      for (let i = 0; i <= MAX_STEPS * 4; i++) {
+        scale.value = g
+        await nextTick()
+        if (fits(el, target)) return
+        if (g <= MIN_SCALE) return
+        // 差得多就直接按真实高度比跳过去，别一档一档挪
+        const cur = naturalTotal(el)
+        const ratio = cur > target * 1.15 ? Math.max(0.7, Math.min(0.97, target / cur)) : 1
+        g = Math.max(MIN_SCALE, Math.round((g * ratio - 0.02) * 100) / 100)
       }
       return
     }
 
-    // 内容不满一屏：从放大上限往下试，找到第一个「放得下且断行干净」的档位。
-    // 中文断行是浏览器贪心算的，标点掉行首只跟具体字号有关，只能逐档试。
+    // 内容不满一屏：先按高度和行宽估一个放大上限，再从这一档往下试，
+    // 找到第一个「放得下且断行干净」的档位 —— 中文断行是浏览器贪心算的，
+    // 标点会不会掉行首只跟具体字号有关，只能逐档实测。
     const max = clamp(Math.round(Math.min(target / base, charLimit(el)) * 0.97 * 100) / 100)
-    if (max <= 1.02) return
-    // 从大到小试，取第一个不溢出、断行也干净的档位。
-    // 中文标点悬挂只跟具体字号有关，所以只能逐档实测。
     let safe = 1
-    for (let g = max; g > 1; g = Math.round((g - 0.02) * 100) / 100) {
+    for (let g = max; g > 1.001; g = Math.round((g - 0.02) * 100) / 100) {
       scale.value = g
       await nextTick()
-      if (!fits(el)) continue
+      if (!fits(el, target)) continue
       if (!hasBadBreak(el)) return
       // 记录一个可用但略有瑕疵的档位，实在挑不到时用它，别一直停在原尺寸
       if (safe === 1) safe = g

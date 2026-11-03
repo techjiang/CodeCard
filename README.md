@@ -30,7 +30,8 @@
 npm install
 npm run dev        # 开发
 npm run build      # 生产构建
-npm run test       # 单元测试
+npm run test       # 单元测试（jsdom）
+npm run test:e2e   # 浏览器端 E2E（真实 Chromium，首次需 npx playwright install chromium）
 npm run typecheck # 类型检查
 ```
 
@@ -74,7 +75,8 @@ npm run typecheck # 类型检查
 | 样式 | Tailwind CSS 3 | 设计令牌走 `tailwind.config.ts` |
 | 导出 | 自研 DOM → Canvas | 不走 html2canvas，体积小、结果可预测 |
 | 高亮 | 手写分词器 | 按行输出 token，行号对齐稳、截图不抖 |
-| 测试 | Vitest + jsdom | 61 个用例 |
+| 测试 | Vitest + jsdom | 61 个单元用例 |
+| E2E | Vitest + Playwright | 12 个浏览器用例 |
 
 ### 为什么不用 html2canvas
 
@@ -92,6 +94,11 @@ npm run typecheck # 类型检查
 12 套模板都接了 `useAutoFit`（`src/composables/useAutoFit.ts`）：内容多就缩字号收纳，内容少就放大填满，同一段文字在正方形、横版、竖版下都不会被裁掉或空掉半张卡。
 
 字号是响应式数据，改动后必须等 Vue 更新到 DOM 才能测量，所以全部走异步循环（每次 `await nextTick()`）—— 同步读 `getComputedStyle` 只会拿到上一帧的旧值。
+
+有两点踩过坑，写在这里免得再踩：
+
+- **不能用 `clientHeight` 当上限**：容器本身会被 flex 压小，它当前的高度只是「被压之后的样子」，按它算会一直判为溢出、一路缩到下限。要量内容的自然高度，再跟容器能给出的空间比
+- **`clientHeight` 是取整的**：断行按整字算、行末标点在行盒外，估出来的高度总比实际乐观一点，所以缩放档位要留 6% 余量，再逐档往下试，而不是一步切到「刚好放下」
 
 放大不是无脑填满，有三道闸：
 
@@ -127,8 +134,17 @@ src/
 
 不收集任何数据，不发起任何网络请求。卡片内容、样式和历史记录只存在你自己的浏览器 localStorage 里，最多保留 20 条历史。
 
+## 测试
+
+两层，各管一段：
+
+- **`npm run test`** —— jsdom 里的单元测试。导出渲染器的绘制逻辑靠伪造 `getBoundingClientRect` + 假 Canvas 上下文录调用断言
+- **`npm run test:e2e`** —— 真实 Chromium。自适应缩放、导出像素、白边、中文断行这些**依赖真实排版和真实画布**的东西只能在这里验，jsdom 里 `measureText` 恒返回 0，测出来是自欺欺人
+
+E2E 覆盖：12 套模板 × 3 种尺寸的长文不裁切、横竖版字号真的变、长标识符不在中间劈开、1x/2x/3x 导出尺寸、四边无缝隙、深色模板文字真的画出来了。CI 里 `npm ci` 之后需要 `npx playwright install --with-deps chromium`。
+
 ## 开发约定
 
-- 提交前跑 `npm run typecheck && npm run test && npm run build`
+- 提交前跑 `npm run typecheck && npm run test && npm run build && npm run test:e2e`
 - 卡片尺寸一律用设计像素计算，不依赖预览缩放，保证导出与所见一致
 - 新增模板：在 `src/components/preview/templates/` 建组件，再到 `src/utils/templates.ts` 注册（含 `loader`、`defaultStyle`、`suits`）

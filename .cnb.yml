@@ -9,6 +9,8 @@ main:
           script: npm run typecheck && npm run test && npm run build
           artifacts:
             - dist
+        - name: e2e
+          script: npx playwright install --with-deps chromium && npm run test:e2e
 
 $:
   pull_request:
@@ -19,3 +21,5 @@ $:
           script: npm ci
         - name: check
           script: npm run typecheck && npm run test && npm run build
+        - name: e2e
+          script: npx playwright install --with-deps chromium && npm run test:e2e

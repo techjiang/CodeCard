@@ -48,6 +48,11 @@ const transformStyle = computed(() => ({
   transformOrigin: 'top left',
 }))
 
+/** 导出渲染器需要设计尺寸，直接从 DOM 上读，省得 E2E 再猜 */
+const exportMeta = computed(() =>
+  JSON.stringify({ width: props.style.size.width, height: props.style.size.height }),
+)
+
 function measure() {
   const box = container.value
   if (!box) return
@@ -83,7 +88,13 @@ defineExpose({ measure, cardEl })
 <template>
   <div :ref="setupObserver" class="preview-host" :data-scale="currentScale">
     <div class="preview-stage" :style="wrapperStyle">
-      <div ref="cardEl" class="preview-card" :style="[sizeStyle, transformStyle]" data-card-export>
+      <div
+        ref="cardEl"
+        class="preview-card"
+        :style="[sizeStyle, transformStyle]"
+        data-card-export
+        :data-export-style="exportMeta"
+      >
         <div class="preview-card__inner">
           <component :is="templateComponent" v-if="templateComponent" :card="card" :style="style" />
         </div>

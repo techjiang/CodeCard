@@ -149,15 +149,22 @@ function clipText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number,
   return `${out}…`
 }
 
+/**
+ * 逐字贪心断行。
+ *
+ * 预览里浏览器是按词断的，导出这边只能逐字算，行宽一变断点就会和预览错开。
+ * 所以这里多给 1px：宁可少断一个字，也别在词中间白切一刀。
+ */
 function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, ellipsis: boolean): string[] {
   if (!text) return []
   if (maxWidth <= 0) return [text]
   const chars = Array.from(clipText(ctx, text, maxWidth, ellipsis))
+  const limit = maxWidth + 1
   const lines: string[] = []
   let current = ''
   for (const ch of chars) {
     const test = current + ch
-    if (ctx.measureText(test).width > maxWidth && current) {
+    if (ctx.measureText(test).width > limit && current) {
       lines.push(current)
       current = ch
     } else {
