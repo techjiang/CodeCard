@@ -24,3 +24,22 @@ describe('Markdown', () => {
     expect(markdownToPlain('## 标题\n\n正文**加粗**')).toContain('标题')
   })
 })
+
+describe('中文断行', () => {
+  test('长标识符标出断行点，不劈单词', () => {
+    const nodes = parseInline('用 `Proxy` 替代了 Object.defineProperty，可拦截。', false)
+    const text = nodes.filter((n) => n.type === 'text').map((n) => (n.type === 'text' ? n.value : '')).join('')
+    expect(text).toContain('Object.\ndefine\nProperty')
+  })
+
+  test('链接地址不被打断行标记污染', () => {
+    const nodes = parseInline('见 [文档](https://vuejs.org/guide/intro.html)', false)
+    const link = nodes.find((n) => n.type === 'link')
+    expect(link && link.type === 'link' && link.href).toBe('https://vuejs.org/guide/intro.html')
+  })
+
+  test('行内代码内容保持原样', () => {
+    const nodes = parseInline('`Object.defineProperty`', false)
+    expect(nodes[0]).toEqual({ type: 'code', value: 'Object.defineProperty' })
+  })
+})

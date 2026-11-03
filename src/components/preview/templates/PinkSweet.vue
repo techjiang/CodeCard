@@ -1,10 +1,15 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import type { CardData, CardStyle } from '@/types/card'
 import CardShell from '../parts/CardShell.vue'
 import CardRenderer from '../CardRenderer.vue'
+import { useAutoFit } from '@/composables/useAutoFit'
 import Watermark from '../parts/Watermark.vue'
 
 const props = defineProps<{ card: CardData; style: CardStyle }>()
+
+const contentEl = ref<HTMLElement | null>(null)
+const { scale } = useAutoFit(contentEl, () => [props.card, props.style])
 const pad = () => Math.round(props.style.size.width * 0.055)
 </script>
 
@@ -36,7 +41,9 @@ const pad = () => Math.round(props.style.size.width * 0.055)
     </template>
 
     <div class="pink-card">
-      <CardRenderer :card="card" :style="style" tone="light" />
+      <div ref="contentEl" class="cc-fit">
+      <CardRenderer :card="card" :style="style" tone="light" :fit-scale="scale" />
+    </div>
     </div>
 
     <template #overlay>
@@ -60,5 +67,11 @@ const pad = () => Math.round(props.style.size.width * 0.055)
   border-radius: 28px;
   background: rgba(255, 255, 255, 0.82);
   box-shadow: 0 18px 40px -22px rgba(190, 74, 120, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.9) inset;
+}
+.cc-fit {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 </style>

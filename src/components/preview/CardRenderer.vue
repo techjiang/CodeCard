@@ -20,7 +20,7 @@ const props = defineProps<{
   tone?: 'dark' | 'light' | 'accent'
   /** 是否在代码模板中显示窗体装饰 */
   showChrome?: boolean
-  /** 内容过长时整体缩小字号（1 = 原尺寸） */
+  /** 内容自适应倍率（1 = 原尺寸） */
   fitScale?: number
 }>()
 
@@ -30,8 +30,8 @@ const tone = computed(() => props.tone ?? 'light')
 const baseFontSize = computed(() =>
   props.style.fontSize === 'custom' ? (props.style.customFontSize ?? 32) : FONT_SIZE_MAP[props.style.fontSize],
 )
-const fontSize = computed(() => Math.round(baseFontSize.value * fit.value))
-const codeFontSize = computed(() => Math.round(fontSize.value * 0.5))
+const fontSize = computed(() => Math.max(10, Math.round(baseFontSize.value * fit.value)))
+const codeFontSize = computed(() => Math.max(8, Math.round(fontSize.value * (fit.value > 1 ? 0.46 : 0.5))))
 const textColor = computed(() => (tone.value === 'dark' ? '#F4F6FB' : '#1B1D24'))
 const mutedColor = computed(() => (tone.value === 'dark' ? 'rgba(240, 243, 250, 0.66)' : 'rgba(27, 29, 36, 0.56)'))
 
@@ -132,6 +132,8 @@ const footerItems = computed(() => {
 .cc-body {
   flex: 0 1 auto;
   min-height: 0;
+  /* 同上：给行末标点留余量，避免悬挂出界 */
+  padding-right: 0.4em;
 }
 .cc-footer {
   display: flex;

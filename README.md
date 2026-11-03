@@ -51,6 +51,20 @@ npm run typecheck # 类型检查
 | 手写风 | 随笔、金句 | ![](docs/screenshots/t-handwrite.webp) |
 | 现代简约 | 通用 | ![](docs/screenshots/t-modern-simple.webp) |
 
+### 多尺寸实拍
+
+同一套内容在三种画布下的真实导出结果（点开看原图）：
+
+| 模板 | 正方形 1080 | 横版 1200×630 | 竖版 1080×1920 |
+| --- | --- | --- | --- |
+| 终端黑 | ![](docs/screenshots/terminal-black-square.webp) | ![](docs/screenshots/terminal-black-landscape.webp) | ![](docs/screenshots/terminal-black-portrait.webp) |
+| 极简白 | ![](docs/screenshots/minimal-white-square.webp) | ![](docs/screenshots/minimal-white-landscape.webp) | ![](docs/screenshots/minimal-white-portrait.webp) |
+| 渐变紫 | ![](docs/screenshots/gradient-purple-square.webp) | ![](docs/screenshots/gradient-purple-landscape.webp) | ![](docs/screenshots/gradient-purple-portrait.webp) |
+| 海报风 | ![](docs/screenshots/poster-square.webp) | ![](docs/screenshots/poster-landscape.webp) | ![](docs/screenshots/poster-portrait.webp) |
+| 星空夜 | ![](docs/screenshots/starry-night-square.webp) | ![](docs/screenshots/starry-night-landscape.webp) | ![](docs/screenshots/starry-night-portrait.webp) |
+
+全部 12 套 × 3 种尺寸的截图在 `docs/screenshots/`，文件名是 `{模板}-{尺寸}.webp`。
+
 ## 技术实现
 
 | 层 | 选型 | 说明 |
@@ -60,7 +74,7 @@ npm run typecheck # 类型检查
 | 样式 | Tailwind CSS 3 | 设计令牌走 `tailwind.config.ts` |
 | 导出 | 自研 DOM → Canvas | 不走 html2canvas，体积小、结果可预测 |
 | 高亮 | 手写分词器 | 按行输出 token，行号对齐稳、截图不抖 |
-| 测试 | Vitest + jsdom | 58 个用例，覆盖率 77% |
+| 测试 | Vitest + jsdom | 61 个用例 |
 
 ### 为什么不用 html2canvas
 
@@ -75,9 +89,23 @@ npm run typecheck # 类型检查
 
 ### 内容自适应
 
-正文过长时，杂志风 / 海报风 / 手写风会自动缩小字号收纳（`src/composables/useAutoFit.ts`）。
+12 套模板都接了 `useAutoFit`（`src/composables/useAutoFit.ts`）：内容多就缩字号收纳，内容少就放大填满，同一段文字在正方形、横版、竖版下都不会被裁掉或空掉半张卡。
 
-字号是响应式数据，改动后必须等 Vue 更新到 DOM 才能测量，所以用异步循环逐档试缩 —— 同步读 `getComputedStyle` 只会拿到上一帧的旧值。
+字号是响应式数据，改动后必须等 Vue 更新到 DOM 才能测量，所以全部走异步循环（每次 `await nextTick()`）—— 同步读 `getComputedStyle` 只会拿到上一帧的旧值。
+
+放大不是无脑填满，有三道闸：
+
+- **每行最少字数**：放大后一行仍要有 16 个字，否则窄卡片会把句子排成一列字
+- **横向溢出**：`scrollWidth` 查不出行内元素（行内代码、`<wbr>` 片段）的溢出，得用 `Range.getClientRects()` 量真实行盒
+- **中文避头尾**：标点不能掉在行首，末行也不能只剩一个标点
+
+最后一条最麻烦。浏览器的 `line-break: strict` 拦不住中文逗号跑到行首，而 `Range` 也量不出来 —— 行末标点会被浏览器悬挂到行盒之外，位置仍归属上一行。所以这里用 `measureText` 逐字累加宽度，自己把贪心断行模拟一遍，再据此判断档位干不干净。
+
+### 长标识符断行
+
+`Object.defineProperty` 这类长标识符不要从中间劈开。做法是在 `.`、`_`、`/` 之后和驼峰边界插入零宽空格（`src/utils/typography.ts` 的 `breakPoints`），换行时优先在这些位置断开。
+
+零宽空格比 `<wbr>` 稳：`<wbr>` 只提供一个断点，片段本身超宽时浏览器仍会从中间硬拆。
 
 ## 目录结构
 

@@ -1,10 +1,15 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import type { CardData, CardStyle } from '@/types/card'
 import CardShell from '../parts/CardShell.vue'
 import CardRenderer from '../CardRenderer.vue'
+import { useAutoFit } from '@/composables/useAutoFit'
 import Watermark from '../parts/Watermark.vue'
 
 const props = defineProps<{ card: CardData; style: CardStyle }>()
+
+const contentEl = ref<HTMLElement | null>(null)
+const { scale } = useAutoFit(contentEl, () => [props.card, props.style])
 const pad = () => Math.round(props.style.size.width * 0.06)
 
 // 固定种子，保证导出与预览一致
@@ -50,7 +55,9 @@ const stars = Array.from({ length: 46 }, (_, i) => {
       </svg>
     </template>
 
-    <CardRenderer :card="card" :style="style" tone="dark" />
+    <div ref="contentEl" class="cc-fit">
+      <CardRenderer :card="card" :style="style" tone="dark" :fit-scale="scale" />
+    </div>
 
     <template #overlay>
       <Watermark :watermark="style.watermark" :font-size="Math.round(style.size.width * 0.014)" />
@@ -63,5 +70,11 @@ const stars = Array.from({ length: 46 }, (_, i) => {
   position: absolute;
   inset: 0;
   z-index: 1;
+}
+.cc-fit {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 </style>
