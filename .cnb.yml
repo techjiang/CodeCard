@@ -1,6 +1,8 @@
 main:
   push:
-    - stages:
+    - docker:
+        image: node:22
+      stages:
         - name: install
           script: npm ci
         - name: check
@@ -10,7 +12,9 @@ main:
 
 $:
   pull_request:
-    - stages:
+    - docker:
+        image: node:22
+      stages:
         - name: install
           script: npm ci
         - name: check
