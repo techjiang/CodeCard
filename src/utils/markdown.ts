@@ -2,7 +2,7 @@
  * 极简 Markdown 渲染：段落、标题、列表、引用、代码块、行内样式。
  * 输出结构化块，模板自行决定样式，避免 v-html 带来的截图不确定性。
  */
-import { panguSegments } from './typography'
+import { breakPoints, panguSegments } from './typography'
 
 export type InlineNode =
   | { type: 'text'; value: string }
@@ -20,13 +20,15 @@ export type BlockNode =
   | { type: 'divider' }
 
 export function parseInline(raw: string, autoSpace = true): InlineNode[] {
-  const text = autoSpace ? panguSegments(raw).trim() : raw
+  // 先做中英文加空格，再标出长标识符的断行点（避免 Object.defineProperty 被劈开）
+  const spaced = autoSpace ? panguSegments(raw).trim() : raw
+  const text = spaced
   const nodes: InlineNode[] = []
   const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)|(\[[^\]]+\]\([^)]+\))/g
   let last = 0
   let m: RegExpExecArray | null
   while ((m = re.exec(text))) {
-    if (m.index > last) nodes.push({ type: 'text', value: text.slice(last, m.index) })
+    if (m.index > last) nodes.push({ type: 'text', value: breakPoints(text.slice(last, m.index)) })
     const token = m[0]
     if (token.startsWith('`')) nodes.push({ type: 'code', value: token.slice(1, -1) })
     else if (token.startsWith('**')) nodes.push({ type: 'strong', value: token.slice(2, -2) })
@@ -37,7 +39,7 @@ export function parseInline(raw: string, autoSpace = true): InlineNode[] {
     }
     last = re.lastIndex
   }
-  if (last < text.length) nodes.push({ type: 'text', value: text.slice(last) })
+  if (last < text.length) nodes.push({ type: 'text', value: breakPoints(text.slice(last)) })
   return nodes.filter((n) => n.type !== 'text' || n.value.trim() !== '' || n.value.includes(' '))
 }
 

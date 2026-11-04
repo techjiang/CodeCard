@@ -55,4 +55,46 @@ describe('编辑器 UI', () => {
     await wrapper.find('.ghost-btn').trigger('click')
     expect(wrapper.emitted('randomize')).toBeTruthy()
   })
+
+  /**
+   * 面板改样式必须抛事件给父级。
+   *
+   * 曾经的写法是 `props.style.borderRadius = r` —— 读得到、写不进去（props 代理里是份拷贝），
+   * 按钮状态变了、卡片纹丝不动：圆角、透明度、水印整组开关全是摆设。
+   */
+  test('样式面板的改动都通过 update:style 抛给父级', async () => {
+    const store = useCardEditor()
+    const wrapper = mount(StylePanel, {
+      props: { style: store.style, cardType: store.card.type, favorites: [] },
+    })
+
+    await wrapper.findAll('.seg--wide button')[3].trigger('click') // 24px
+    expect(wrapper.emitted('update:style')![wrapper.emitted('update:style')!.length - 1]).toEqual([{ borderRadius: 24 }])
+
+    await wrapper.findAll('input[type="range"]')[0].setValue('40')
+    expect(wrapper.emitted('update:style')![wrapper.emitted('update:style')!.length - 1]).toEqual([{ backgroundOpacity: 40 }])
+
+    // 水印开关只在勾上之后才渲染文本输入，所以单独找一个面板实例验
+    const wmPanel = mount(StylePanel, {
+      props: { style: { ...store.style, watermark: { enabled: false, position: 'bottom-right', text: '' } }, cardType: 'knowledge', favorites: [] },
+    })
+    await wmPanel.find('input.switch').setValue(true)
+    expect(wmPanel.emitted('update:style')![wmPanel.emitted('update:style')!.length - 1]).toEqual([
+      { watermark: { enabled: true, position: 'bottom-right', text: '' } },
+    ])
+  })
+
+  test('父级收到 update:style 后样式真的变了', async () => {
+    const store = useCardEditor()
+    const wrapper = mount(StylePanel, {
+      props: {
+        style: store.style,
+        cardType: store.card.type,
+        favorites: [],
+        'onUpdate:style': (part: Partial<typeof store.style>) => store.patchStyle(part),
+      },
+    })
+    await wrapper.findAll('.seg--wide button')[0].trigger('click') // 0px
+    expect(store.style.borderRadius).toBe(0)
+  })
 })

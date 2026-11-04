@@ -72,4 +72,26 @@ describe('CardEditor', () => {
     store.reset()
     expect(store.card.title).not.toBe('x')
   })
+
+  test('自定义尺寸对非法输入兜底', () => {
+    const store = useCardEditor()
+    store.setCustomSize(Number.NaN, Number.NaN)
+    expect([store.style.size.width, store.style.size.height]).toEqual([1080, 1080])
+  })
+
+  test('像素比随画布宽度变化', () => {
+    const store = useCardEditor()
+    store.setSizePreset('square')
+    expect(store.pixelRatio.value).toBe(1)
+    store.setCustomSize(2160, 2160)
+    expect(store.pixelRatio.value).toBe(2)
+  })
+
+  test('内容或样式改动都会推进 revision', async () => {
+    const store = useCardEditor()
+    const start = store.revision.value
+    store.card.title = '触发一次'
+    await Promise.resolve()
+    expect(store.revision.value).toBeGreaterThan(start)
+  })
 })

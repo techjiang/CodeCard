@@ -83,6 +83,9 @@ const strongColor = computed(() => (props.tone === 'dark' ? '#FFFFFF' : '#11131A
 }
 .quote__line {
   margin: 0;
+  /* 行末标点贴到边界时，浏览器的 CJK 挤压会把它挤到行盒外，
+     看起来就像下一行以标点开头。留出半个字，别让它贴边。 */
+  padding-right: 0.5em;
 }
 .quote__md {
   display: flex;

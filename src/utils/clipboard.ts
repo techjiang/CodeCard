@@ -1,9 +1,9 @@
 export async function copyBlobToClipboard(blob: Blob): Promise<boolean> {
   if (typeof navigator === 'undefined' || !navigator.clipboard) return false
   const ClipboardItemCtor = (globalThis as unknown as { ClipboardItem?: typeof ClipboardItem }).ClipboardItem
-  if (!ClipboardItemCtor || typeof ClipboardItemCtor.supports === 'function' && !ClipboardItemCtor.supports('image/png')) {
-    return false
-  }
+  if (!ClipboardItemCtor) return false
+  // 早期实现没有 supports()，有就直接试
+  if (typeof ClipboardItemCtor.supports === 'function' && !ClipboardItemCtor.supports('image/png')) return false
   try {
     await navigator.clipboard.write([new ClipboardItemCtor({ 'image/png': blob })])
     return true

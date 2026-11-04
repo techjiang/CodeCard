@@ -10,6 +10,8 @@ export interface ExportTarget {
   element: HTMLElement | null
   card: CardData
   style: CardStyle
+  /** 导出要等自适应量完，否则可能截到缩放的中间态 */
+  waitUntilReady?: () => Promise<void>
 }
 
 export function useExport() {
@@ -27,8 +29,11 @@ export function useExport() {
   async function render(scale: ExportScale): Promise<ExportResult> {
     const t = target.value
     if (!t?.element) throw new Error('卡片尚未挂载')
+    await t.waitUntilReady?.()
     const { width, height } = t.style.size
-    const canvas = await renderElementToCanvas(t.element, { scale, width, height })
+    // 导出图必须带透明通道：背景透明度调成 0 时要能叠到别的东西上。
+    // 渲染器的兜底底色默认刷白，那就是「导出一张白底图」而不是「一张透明底卡」。
+    const canvas = await renderElementToCanvas(t.element, { scale, width, height, background: 'transparent' })
     const blob = await canvasToBlob(canvas)
     return {
       blob,
@@ -75,7 +80,7 @@ export function useExport() {
     return s ? `${s.width} × ${s.height}` : ''
   })
 
-  return { exporting, lastError, lastResult, scales, register, exportPng, copyToClipboard, sizeLabel }
+  return { exporting, lastError, lastResult, scales, register, render, exportPng, copyToClipboard, sizeLabel }
 }
 
 export type ExportStore = ReturnType<typeof useExport>

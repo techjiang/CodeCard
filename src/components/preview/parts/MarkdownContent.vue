@@ -1,10 +1,34 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { parseMarkdown } from '@/utils/markdown'
+import { ZWSP, breakParts, breakPoints } from '@/utils/typography'
 
 const props = defineProps<{ content: string; tone: 'dark' | 'light' | 'accent'; fontSize: number }>()
 
 const blocks = computed(() => parseMarkdown(props.content ?? ''))
+/** 行内代码里的长标识符同样要能在语义边界换行 */
+function codeParts(value: string): string[] {
+  return breakParts(breakPoints(value))
+}
+
+/**
+ * 把断点片段拼成一整串，断点处插零宽空格。
+ *
+ * 不写成模板里的逐个插值：那样每个片段都会产生独立的文本节点，
+ * 中间还夹着一堆空节点，导出时逐段量行盒既慢又容易错位。
+ */
+function joinWithZwsp(parts: string[]): string {
+  return parts.join(ZWSP)
+}
+
+function breakText(value: string): string {
+  return joinWithZwsp(breakParts(value))
+}
+
+function codeText(value: string): string {
+  return joinWithZwsp(codeParts(value))
+}
+
 const strongColor = computed(() => (props.tone === 'dark' ? '#FFFFFF' : '#11131A'))
 </script>
 
@@ -15,32 +39,14 @@ const strongColor = computed(() => (props.tone === 'dark' ? '#FFFFFF' : '#11131A
         v-if="block.type === 'heading'"
         class="md-h"
         :style="{ fontSize: `${Math.round(fontSize * (block.level <= 2 ? 1.12 : 1))}px` }"
-      >
-        <template v-for="(node, ni) in block.inlines" :key="ni">{{ node.value }}</template>
-      </h2>
+      ><template v-for="(node, ni) in block.inlines" :key="ni"><template v-if="node.type === 'text'">{{ breakText(node.value) }}</template><template v-else>{{ node.value }}</template></template></h2>
       <p v-else-if="block.type === 'paragraph'" class="md-p">
-        <template v-for="(node, ni) in block.inlines" :key="ni">
-          <code v-if="node.type === 'code'" class="md-code">{{ node.value }}</code>
-          <strong v-else-if="node.type === 'strong'" :style="{ color: strongColor }">{{ node.value }}</strong>
-          <em v-else-if="node.type === 'em'">{{ node.value }}</em>
-          <span v-else-if="node.type === 'link'" class="md-link">{{ node.value }}</span>
-          <template v-else>{{ node.value }}</template>
-        </template>
+        <template v-for="(node, ni) in block.inlines" :key="ni"><code v-if="node.type === 'code'" class="md-code">{{ codeText(node.value) }}</code><strong v-else-if="node.type === 'strong'" :style="{ color: strongColor }">{{ node.value }}</strong><em v-else-if="node.type === 'em'">{{ node.value }}</em><span v-else-if="node.type === 'link'" class="md-link">{{ node.value }}</span><template v-else-if="node.type === 'text'">{{ breakText(node.value) }}</template></template>
       </p>
       <ul v-else-if="block.type === 'list'" class="md-list" :class="{ 'md-list--ordered': block.ordered }">
-        <li v-for="(item, ii) in block.items" :key="ii">
-          <span class="md-marker">{{ block.ordered ? `${ii + 1}.` : '•' }}</span>
-          <span class="md-item">
-            <template v-for="(node, ni) in item" :key="ni">
-              <code v-if="node.type === 'code'" class="md-code">{{ node.value }}</code>
-              <strong v-else-if="node.type === 'strong'" :style="{ color: strongColor }">{{ node.value }}</strong>
-              <template v-else>{{ node.value }}</template>
-            </template>
-          </span>
-        </li>
+        <li v-for="(item, ii) in block.items" :key="ii"><span class="md-marker">{{ block.ordered ? `${ii + 1}.` : '•' }}</span><span class="md-item"><template v-for="(node, ni) in item" :key="ni"><code v-if="node.type === 'code'" class="md-code">{{ codeText(node.value) }}</code><strong v-else-if="node.type === 'strong'" :style="{ color: strongColor }">{{ node.value }}</strong><template v-else-if="node.type === 'text'">{{ breakText(node.value) }}</template><template v-else>{{ node.value }}</template></template></span></li>
       </ul>
-      <blockquote v-else-if="block.type === 'quote'" class="md-quote">
-        <template v-for="(node, ni) in block.inlines" :key="ni">{{ node.value }}</template>
+      <blockquote v-else-if="block.type === 'quote'" class="md-quote"><template v-for="(node, ni) in block.inlines" :key="ni"><template v-if="node.type === 'text'">{{ breakText(node.value) }}</template><template v-else>{{ node.value }}</template></template>
       </blockquote>
       <pre v-else-if="block.type === 'code'" class="md-pre"><code>{{ block.value }}</code></pre>
       <hr v-else-if="block.type === 'divider'" class="md-hr" />
@@ -54,6 +60,9 @@ const strongColor = computed(() => (props.tone === 'dark' ? '#FFFFFF' : '#11131A
   flex-direction: column;
   gap: 0.62em;
   line-height: 1.8;
+  /* 正文按容器宽度排版：不写死会让长行把整条父链顶宽，自量的「可用宽度」跟着失真 */
+  min-width: 0;
+  max-width: 100%;
 }
 .md-h {
   margin: 0.2em 0 0;
@@ -69,6 +78,8 @@ const strongColor = computed(() => (props.tone === 'dark' ? '#FFFFFF' : '#11131A
   background: rgba(127, 127, 127, 0.16);
   font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
   font-size: 0.88em;
+  /* 零宽空格是真实字符，行内代码里的断点和正文一致，不会被行尾规则吃掉 */
+  white-space: pre-wrap;
 }
 .md-link {
   text-decoration: underline;
@@ -85,12 +96,19 @@ const strongColor = computed(() => (props.tone === 'dark' ? '#FFFFFF' : '#11131A
 }
 .md-list li {
   display: flex;
+  /* 圆点跟首行对齐，别在多行条目里飘到中间 */
+  align-items: flex-start;
   gap: 0.5em;
 }
 .md-marker {
   flex: 0 0 auto;
   min-width: 1.1em;
+  line-height: inherit;
   opacity: 0.6;
+}
+.md-item {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .md-quote {
   margin: 0;

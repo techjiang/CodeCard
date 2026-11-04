@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { normalizePunctuation, pangu, spaceCJK } from '@/utils/typography'
+import { ZWSP, breakParts, breakPoints, normalizePunctuation, pangu, panguSegments, spaceCJK, textParts } from '@/utils/typography'
 
 describe('Chinese Typography', () => {
   test('中英文之间自动加空格', () => {
@@ -32,5 +32,38 @@ describe('Chinese Typography', () => {
   test('空输入安全返回', () => {
     expect(pangu('')).toBe('')
     expect(spaceCJK('')).toBe('')
+  })
+
+  test('标点规整不会把英文句点当成中文句号', () => {
+    expect(normalizePunctuation('vuejs.org')).toBe('vuejs.org')
+    expect(normalizePunctuation('版本 3.5')).toBe('版本 3.5')
+  })
+
+  test('括号与引号只处理含中文的内容', () => {
+    expect(normalizePunctuation('(english)')).toBe('(english)')
+    expect(normalizePunctuation('"english"')).toBe('"english"')
+  })
+
+  test('行内代码不参与中英文加空格', () => {
+    expect(panguSegments('用 `Vue3` 做前端')).toBe('用 `Vue3` 做前端')
+    expect(panguSegments('使用Vue开发')).toBe('使用 Vue 开发')
+  })
+
+  test('代码块整体跳过排版', () => {
+    const src = '```\n使用Vue开发\n```\n\n正文使用Vue开发'
+    expect(panguSegments(src)).toContain('```\n使用Vue开发\n```')
+    expect(panguSegments(src)).toContain('正文使用 Vue 开发')
+  })
+
+  test('断行点不破坏短标识符', () => {
+    expect(textParts(breakPoints('a.b'))).toEqual(['a.', 'b'])
+    expect(textParts(breakPoints('普通文本'))).toEqual(['普通文本'])
+  })
+
+  test('断点用零宽空格，片段比整行宽时浏览器也会先在这里断', () => {
+    expect(breakParts(breakPoints('Object.defineProperty'))).toEqual(['Object.', 'define', 'Property'])
+    // 零宽空格是不可见字符，但必须是真实字符（<wbr> 兜不住超宽片段）
+    expect(ZWSP).toBe('\u200B')
+    expect(ZWSP).toHaveLength(1)
   })
 })

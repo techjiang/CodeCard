@@ -53,3 +53,39 @@ export function panguSegments(text: string): string {
     .map((seg, i) => (i % 2 === 1 ? seg : pangu(seg)))
     .join('')
 }
+
+/**
+ * 长标识符断行点：优先在 . _ / 之后断，别把单词从中间劈开。
+ * 输出纯文本，渲染时需按 \n 转成 <wbr>。
+ */
+export function breakPoints(text: string): string {
+  return (
+    text
+      // 分隔符之后：Object.defineProperty → Object. | defineProperty
+      .replace(/([A-Za-z0-9])([._/])(?=[A-Za-z0-9])/g, '$1$2\n')
+      // 驼峰：defineProperty → define | Property
+      .replace(/([a-z0-9])(?=[A-Z][a-z])/g, '$1\n')
+  )
+}
+
+/**
+ * 文本切成「断点」片段：渲染时片段之间插入 <wbr>。
+ * 用零宽空格而不是 <wbr>：<wbr> 只提供一个断点，片段本身超宽时
+ * 浏览器仍会从中间硬拆；零宽空格在行内元素里表现更稳。
+ */
+export function textParts(value: string): string[] {
+  return value.split('\n')
+}
+
+/**
+ * 断点片段之间要插入的字符。
+ *
+ * 用零宽空格而不是 `<wbr>`：`<wbr>` 只给浏览器一个断点，片段本身比整行还宽时
+ * 浏览器仍会从中间硬拆；零宽空格是真实字符，浏览器会先在这里断。
+ */
+export const ZWSP = '\u200B'
+
+/** 断点片段：渲染时片段之间插零宽空格 */
+export function breakParts(text: string): string[] {
+  return text.split('\n')
+}

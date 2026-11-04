@@ -20,8 +20,10 @@ const props = defineProps<{
   tone?: 'dark' | 'light' | 'accent'
   /** 是否在代码模板中显示窗体装饰 */
   showChrome?: boolean
-  /** 内容过长时整体缩小字号（1 = 原尺寸） */
+  /** 内容自适应倍率（1 = 原尺寸） */
   fitScale?: number
+  /** 模板追加到 .cc-content 上的样式（垂直对齐等） */
+  contentStyle?: Record<string, string>
 }>()
 
 const fit = computed(() => props.fitScale ?? 1)
@@ -30,8 +32,8 @@ const tone = computed(() => props.tone ?? 'light')
 const baseFontSize = computed(() =>
   props.style.fontSize === 'custom' ? (props.style.customFontSize ?? 32) : FONT_SIZE_MAP[props.style.fontSize],
 )
-const fontSize = computed(() => Math.round(baseFontSize.value * fit.value))
-const codeFontSize = computed(() => Math.round(fontSize.value * 0.5))
+const fontSize = computed(() => Math.max(10, Math.round(baseFontSize.value * fit.value)))
+const codeFontSize = computed(() => Math.max(8, Math.round(fontSize.value * (fit.value > 1 ? 0.46 : 0.5))))
 const textColor = computed(() => (tone.value === 'dark' ? '#F4F6FB' : '#1B1D24'))
 const mutedColor = computed(() => (tone.value === 'dark' ? 'rgba(240, 243, 250, 0.66)' : 'rgba(27, 29, 36, 0.56)'))
 
@@ -46,7 +48,7 @@ const footerItems = computed(() => {
 </script>
 
 <template>
-  <div class="cc-content" :style="{ fontFamily: FONT_STACK[style.fontFamily], color: textColor }">
+  <div class="cc-content" :style="{ fontFamily: FONT_STACK[style.fontFamily], color: textColor, ...contentStyle }">
     <header v-if="showTitle" class="cc-header">
       <h1 class="cc-title" :style="{ fontSize: `${Math.round(fontSize * 1.62)}px` }">{{ card.title }}</h1>
       <p v-if="showSubtitle" class="cc-subtitle" :style="{ fontSize: `${Math.round(fontSize * 0.72)}px`, color: mutedColor }">
@@ -110,7 +112,11 @@ const footerItems = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 34px;
+  /* 只能撑到容器宽度：flex 子项的 min-width 默认是 auto，写 100% 反而会被自己的内容顶宽，
+     父级跟着被撑开，量出来的「可用宽度」就成了错的 */
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   height: 100%;
   line-height: 1.8;
 }
@@ -132,6 +138,8 @@ const footerItems = computed(() => {
 .cc-body {
   flex: 0 1 auto;
   min-height: 0;
+  /* 同上：给行末标点留余量，避免悬挂出界 */
+  padding-right: 0.4em;
 }
 .cc-footer {
   display: flex;

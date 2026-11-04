@@ -1,5 +1,15 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, ref, shallowRef, watch, type ComponentPublicInstance } from 'vue'
+import {
+  computed,
+  defineAsyncComponent,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  shallowRef,
+  watch,
+  type ComponentPublicInstance,
+} from 'vue'
 import type { CardData, CardStyle } from '@/types/card'
 import { findTemplate } from '@/utils/templates'
 
@@ -14,6 +24,7 @@ const emit = defineEmits<{ ready: [el: HTMLElement | null] }>()
 
 const container = ref<HTMLElement | null>(null)
 const cardEl = ref<HTMLElement | null>(null)
+const mounted = ref(false)
 const autoScale = ref(1)
 
 /** 模板按需加载，缓存已加载组件避免闪烁 */
@@ -48,21 +59,42 @@ const transformStyle = computed(() => ({
   transformOrigin: 'top left',
 }))
 
+/** 导出渲染器需要设计尺寸，直接从 DOM 上读，省得 E2E 再猜 */
+const exportMeta = computed(() =>
+  JSON.stringify({ width: props.style.size.width, height: props.style.size.height }),
+)
+
+/** 预览区留给卡片的边距：左右各 32、底部给尺寸标注留 90，和 .preview-host 对齐 */
+const PREVIEW_PAD_X = 64
+const PREVIEW_PAD_Y = 90
+
 function measure() {
   const box = container.value
   if (!box) return
-  const available = box.clientWidth - 64
-  const availableH = box.clientHeight - 60 - 30
+  const available = box.clientWidth - PREVIEW_PAD_X
+  const availableH = box.clientHeight - PREVIEW_PAD_Y
   if (available <= 0 || availableH <= 0) return
-  const scale = Math.min(available / props.style.size.width, availableH / props.style.size.height, 1)
-  autoScale.value = Math.max(0.12, Number(scale.toFixed(4)))
+  const design = props.style.size
+  const fitted = Math.min(available / design.width, availableH / design.height)
+  // 正好卡在 1 附近时保持原尺寸：1.0001 倍的缩放只会让文字被重采样变糊
+  autoScale.value = fitted >= 1 ? 1 : Math.max(0.12, Number(fitted.toFixed(4)))
 }
 
 let observer: ResizeObserver | null = null
 
+function bindContainer(el: Element | ComponentPublicInstance | null) {
+  container.value = el instanceof HTMLElement ? el : null
+}
+
+/** 绑定容器并挂上尺寸监听。用函数 ref + onMounted 双保险：
+ *  函数 ref 在 v-if 隐藏/显示时可能不触发，光靠它可能一辈子拿不到容器 */
+function bindHost(el: Element | ComponentPublicInstance | null) {
+  bindContainer(el)
+  if (el instanceof HTMLElement) setupObserver(el)
+}
+
 function setupObserver(el: Element | ComponentPublicInstance | null) {
   const host = el instanceof HTMLElement ? el : null
-  container.value = host
   if (typeof ResizeObserver === 'undefined' || !host) return
   observer?.disconnect()
   observer = new ResizeObserver(measure)
@@ -73,17 +105,61 @@ function setupObserver(el: Element | ComponentPublicInstance | null) {
   setTimeout(measure, 120)
 }
 
-watch(() => [props.style.size.width, props.style.size.height], () => measure())
+// 容器在挂载那一刻可能还没有尺寸（隐藏面板、懒加载、布局未稳），
+// 之后又不会再有 resize 通知，所以要等挂载后补测几次
+onMounted(() => {
+  mounted.value = true
+  // 移动端切 Tab 才显示预览，容器此时才第一次有尺寸
+  if (container.value) setupObserver(container.value)
+  measure()
+  requestAnimationFrame(measure)
+  setTimeout(measure, 120)
+  setTimeout(measure, 400)
+})
 
-watch(cardEl, (el) => emit('ready', el))
+watch(
+  () => [props.style.size.width, props.style.size.height],
+  async () => {
+    // 先让 DOM 换成新尺寸再量，否则量到的还是上一张卡片撑开的容器
+    await nextTick()
+    measure()
+  },
+)
 
-defineExpose({ measure, cardEl })
+// 卡片根节点在外层挂载时可能还没渲染出来，挂载后补发一次 ready，否则导出目标一直是空的
+watch(
+  [cardEl, mounted],
+  ([el, isMounted]) => {
+    if (isMounted) emit('ready', el)
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => observer?.disconnect())
+
+/**
+ * 模板里的自适应还在逐档试缩时不导出，免得截到中间态。
+ * 模板是异步组件，它自己挂在 window 上的调试钩子不算数，必须用组件实例的 ref。
+ */
+async function waitUntilSettled() {
+  const instance = (templateComponent.value as unknown as ComponentPublicInstance | null)?.$
+  const fn = (instance?.exposed as { waitForSettle?: () => Promise<void> } | undefined)?.waitForSettle
+  await fn?.()
+}
+
+defineExpose({ measure, cardEl, waitUntilSettled })
 </script>
 
 <template>
-  <div :ref="setupObserver" class="preview-host" :data-scale="currentScale">
+  <div :ref="bindHost" class="preview-host" :data-scale="currentScale">
     <div class="preview-stage" :style="wrapperStyle">
-      <div ref="cardEl" class="preview-card" :style="[sizeStyle, transformStyle]" data-card-export>
+      <div
+        ref="cardEl"
+        class="preview-card"
+        :style="[sizeStyle, transformStyle]"
+        data-card-export
+        :data-export-style="exportMeta"
+      >
         <div class="preview-card__inner">
           <component :is="templateComponent" v-if="templateComponent" :card="card" :style="style" />
         </div>
@@ -121,9 +197,17 @@ defineExpose({ measure, cardEl })
   gap: 14px;
   width: 100%;
   height: 100%;
+  /* 移动端可用高度只有几百像素，别再往里塞大内边距 */
   min-height: 0;
   overflow: hidden;
   padding: 24px 32px 12px;
+}
+
+@media (max-width: 900px) {
+  .preview-host {
+    padding: 12px 16px 8px;
+    gap: 8px;
+  }
 }
 .preview-stage {
   position: relative;

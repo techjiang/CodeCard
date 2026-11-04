@@ -9,7 +9,9 @@ import { useAutoFit } from '@/composables/useAutoFit'
 const props = defineProps<{ card: CardData; style: CardStyle }>()
 
 const contentEl = ref<HTMLElement | null>(null)
-const { scale } = useAutoFit(contentEl, () => [props.card, props.style])
+const { scale, waitForSettle } = useAutoFit(contentEl, () => [props.card, props.style])
+defineExpose({ waitForSettle })
+// 杂志风本来就顶上排，底部留白是版式的一部分，不跟着居中
 const pad = () => Math.round(props.style.size.width * 0.075)
 const serif = '"Songti SC", "Source Han Serif SC", Georgia, serif'
 </script>
@@ -42,6 +44,10 @@ const serif = '"Songti SC", "Source Han Serif SC", Georgia, serif'
 }
 .mag {
   flex: 1 1 auto;
+  /* 版心的宽度必须由容器决定：min-width:auto 会让它被内容顶宽，
+     父级跟着撑开，量出来的「可用宽度」就成了错的，字号也就缩不下去 */
+  width: 100%;
+  min-width: 0;
   min-height: 0;
   width: 100%;
   display: flex;

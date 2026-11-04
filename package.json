@@ -9,17 +9,20 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "typecheck": "vue-tsc -b --noEmit"
+    "typecheck": "vue-tsc -b --noEmit",
+    "test:e2e": "node scripts/e2e.mjs"
   },
   "dependencies": {
     "vue": "^3.5.13"
   },
   "devDependencies": {
+    "@types/node": "^26.6.6",
     "@vitejs/plugin-vue": "^5.2.1",
     "@vitest/coverage-v8": "^2.1.8",
     "@vue/test-utils": "^2.4.6",
     "autoprefixer": "^10.4.20",
     "jsdom": "^25.0.1",
+    "playwright": "^1.64.1",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2",

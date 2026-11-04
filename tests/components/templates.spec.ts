@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'vitest'
 import { mount } from '@vue/test-utils'
 import type { Component } from 'vue'
-import { TEMPLATES } from '@/utils/templates'
+import { findTemplate, TEMPLATES, templatesForType } from '@/utils/templates'
 import CardRenderer from '@/components/preview/CardRenderer.vue'
-import { DEFAULT_CARD, DEFAULT_STYLE } from '@/types/card'
+import { DEFAULT_CARD, DEFAULT_STYLE, SIZE_PRESETS } from '@/types/card'
+import { CATEGORY_LABELS } from '@/types/template'
 
 describe('卡片模板', () => {
   test('至少 12 套且分类齐全', () => {
@@ -97,5 +98,63 @@ describe('卡片模板', () => {
       props: { card: { ...DEFAULT_CARD, tags: ['a', 'b', 'c', 'd', 'e', 'f'] }, style: DEFAULT_STYLE, tone: 'light' },
     })
     expect(wrapper.findAll('.cc-tag')).toHaveLength(5)
+  })
+
+  test('12 套模板 × 6 种卡片类型都能渲染，不崩不白屏', async () => {
+    const types = ['knowledge', 'code', 'terminal', 'math', 'quote', 'custom'] as const
+    const samples: Record<(typeof types)[number], string> = {
+      knowledge: '## 小标题\n\n正文有 `inline` 和 **强调**。\n\n- 一\n- 二',
+      code: 'const a = 1 // 注释\nexport default a',
+      terminal: '$ npm i\nadded 1 package',
+      math: 'E = mc^2 \\leq \\infty',
+      quote: '简单是可靠的前提。',
+      custom: '随手记一段文字',
+    }
+    for (const tpl of TEMPLATES) {
+      const mod = await tpl.loader()
+      for (const type of types) {
+        const wrapper = mount(mod.default as Component, {
+          props: {
+            card: { ...DEFAULT_CARD, type, content: samples[type], tags: ['Vue', '前端'] },
+            style: { ...DEFAULT_STYLE, templateId: tpl.id, ...tpl.defaultStyle },
+          },
+        })
+        expect(wrapper.find('[data-card-root]').exists()).toBe(true)
+        expect(wrapper.text().trim().length).toBeGreaterThan(0)
+        wrapper.unmount()
+      }
+    }
+  })
+
+  test('三种尺寸预设都能渲染出根节点', async () => {
+    const mod = await TEMPLATES[0].loader()
+    for (const preset of ['square', 'landscape', 'portrait'] as const) {
+      const wrapper = mount(mod.default as Component, {
+        props: { card: { ...DEFAULT_CARD, type: 'code' }, style: { ...DEFAULT_STYLE, size: { ...SIZE_PRESETS[preset] } } },
+      })
+      const root = wrapper.find('[data-card-root]')
+      expect(root.exists()).toBe(true)
+      expect(root.attributes('style')).toContain(`${SIZE_PRESETS[preset].width}px`)
+      wrapper.unmount()
+    }
+  })
+
+  test('templatesForType 把匹配的模板排在前面', () => {
+    const code = templatesForType('code')
+    expect(code).toHaveLength(TEMPLATES.length)
+    expect(code[0].suits).toContain('code')
+    const tail = code.slice(code.findIndex((t) => !t.suits?.includes('code')))
+    expect(tail.every((t) => !t.suits?.includes('code'))).toBe(true)
+  })
+
+  test('findTemplate 未知 id 回退到默认模板', () => {
+    expect(findTemplate('not-exist').id).toBe(TEMPLATES[4].id)
+    expect(findTemplate('terminal-black').name).toBe('终端黑')
+  })
+
+  test('每个分类都有标签，且模板 id 唯一', () => {
+    const ids = TEMPLATES.map((t) => t.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    for (const t of TEMPLATES) expect(CATEGORY_LABELS[t.category]).toBeTruthy()
   })
 })

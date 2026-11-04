@@ -1,10 +1,19 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
 import type { CardData, CardStyle } from '@/types/card'
 import CardShell from '../parts/CardShell.vue'
 import CardRenderer from '../CardRenderer.vue'
+import { useAutoFit } from '@/composables/useAutoFit'
 import Watermark from '../parts/Watermark.vue'
 
 const props = defineProps<{ card: CardData; style: CardStyle }>()
+
+const contentEl = ref<HTMLElement | null>(null)
+const { scale, balance, waitForSettle } = useAutoFit(contentEl, () => [props.card, props.style])
+defineExpose({ waitForSettle })
+// 内容装得下时把 .cc-content 竖着居中；溢出时（balance = 1）交还给 flex 自己排
+// 居中要写在 .cc-content 上：它自己是 height:100% 的 flex 列，排在版心里不会动
+const fitStyle = computed(() => ({ justifyContent: balance.value <= 0.5 ? 'center' : 'flex-start' }))
 const pad = () => Math.round(props.style.size.width * 0.055)
 </script>
 
@@ -36,7 +45,9 @@ const pad = () => Math.round(props.style.size.width * 0.055)
     </template>
 
     <div class="pink-card">
-      <CardRenderer :card="card" :style="style" tone="light" />
+      <div ref="contentEl" class="cc-fit">
+      <CardRenderer :card="card" :style="style" tone="light" :fit-scale="scale" :content-style="fitStyle" />
+    </div>
     </div>
 
     <template #overlay>
@@ -60,5 +71,15 @@ const pad = () => Math.round(props.style.size.width * 0.055)
   border-radius: 28px;
   background: rgba(255, 255, 255, 0.82);
   box-shadow: 0 18px 40px -22px rgba(190, 74, 120, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.9) inset;
+}
+.cc-fit {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  /* 版心的宽度必须由容器决定：min-width:auto 会让它被内容顶宽，
+     父级跟着撑开，量出来的「可用宽度」就成了错的，字号也就缩不下去 */
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
 }
 </style>
