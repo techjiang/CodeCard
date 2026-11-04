@@ -713,11 +713,45 @@ function paintBackground(
   ctx.restore()
 }
 
-function hasVisibleBorder(cs: CSSStyleDeclaration): boolean {
-  const width = px(cs.borderTopWidth)
-  return !!width && cs.borderTopStyle !== 'none' && cs.borderTopColor !== 'rgba(0, 0, 0, 0)'
+const SIDES = ['Top', 'Right', 'Bottom', 'Left'] as const
+type Side = (typeof SIDES)[number]
+
+interface SideBorder {
+  side: Side
+  width: number
+  color: string
 }
 
+/**
+ * 四条边各自判定。
+ *
+ * 只认 `border-top` 是错的：引用块的竖线用的是 `border-left`，
+ * `currentColor` 在计算样式里已经算成了具体颜色。
+ */
+function sideBorders(cs: CSSStyleDeclaration): SideBorder[] {
+  const out: SideBorder[] = []
+  for (const side of SIDES) {
+    const width = px(cs[`border${side}Width` as 'borderTopWidth'])
+    if (!width) continue
+    const style = cs[`border${side}Style` as 'borderTopStyle']
+    const color = cs[`border${side}Color` as 'borderTopColor']
+    if (style === 'none' || style === 'hidden' || color === 'rgba(0, 0, 0, 0)' || color === 'transparent') continue
+    out.push({ side, width, color })
+  }
+  return out
+}
+
+function hasVisibleBorder(cs: CSSStyleDeclaration): boolean {
+  return sideBorders(cs).length > 0
+}
+
+/**
+ * 画边框。
+ *
+ * 四条边一起 `strokeRect` 只对「四边同宽同色」成立，所以按边分开画；
+ * 有圆角时整圈仍用 `roundRect` 描一遍（好看且不会在圆角处留豁口），
+ * 但描边宽度取这条边自己的值，颜色按边设。
+ */
 function paintBorder(
   ctx: CanvasRenderingContext2D,
   el: HTMLElement,
@@ -726,24 +760,40 @@ function paintBorder(
   rootRect: DOMRect,
   scale: number,
 ) {
-  const width = px(cs.borderTopWidth)
-  if (!hasVisibleBorder(cs)) return
+  const borders = sideBorders(cs)
+  if (!borders.length) return
   const nb = norm(rect, rootRect, el)
   const x = nb.left * scale
   const y = nb.top * scale
   const w = nb.width * scale
   const h = nb.height * scale
-  ctx.strokeStyle = cs.borderTopColor
-  ctx.lineWidth = width * scale
   const radius = px(cs.borderTopLeftRadius) * scale
+
   if (radius > 0) {
+    for (const b of borders) {
+      const lw = b.width * scale
+      ctx.save()
+      ctx.beginPath()
+      // 描边中心线内缩半个线宽：圆角处不能靠裁剪切，直接按内缩的圆角走线
+      roundRect(ctx, x + lw / 2, y + lw / 2, w - lw, h - lw, Math.max(0, radius - lw / 2))
+      ctx.strokeStyle = b.color
+      ctx.lineWidth = lw
+      ctx.stroke()
+      ctx.restore()
+    }
+    return
+  }
+
+  // 直角：一条边一根实心矩形，比描边准（描边会被取整啃掉半像素）
+  for (const b of borders) {
+    const lw = b.width * scale
     ctx.save()
-    ctx.beginPath()
-    roundRect(ctx, x + (width * scale) / 2, y + (width * scale) / 2, w - width * scale, h - width * scale, radius)
-    ctx.stroke()
+    ctx.fillStyle = b.color
+    if (b.side === 'Top') ctx.fillRect(x, y, w, lw)
+    else if (b.side === 'Bottom') ctx.fillRect(x, y + h - lw, w, lw)
+    else if (b.side === 'Left') ctx.fillRect(x, y, lw, h)
+    else ctx.fillRect(x + w - lw, y, lw, h)
     ctx.restore()
-  } else {
-    ctx.strokeRect(x + (width * scale) / 2, y + (width * scale) / 2, w - width * scale, h - width * scale)
   }
 }
 
