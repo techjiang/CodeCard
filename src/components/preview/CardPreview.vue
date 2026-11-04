@@ -24,6 +24,8 @@ const emit = defineEmits<{ ready: [el: HTMLElement | null] }>()
 
 const container = ref<HTMLElement | null>(null)
 const cardEl = ref<HTMLElement | null>(null)
+/** 当前模板的组件实例：自适应那些方法挂在它身上，只能从实例拿 */
+const templateRef = ref<ComponentPublicInstance | null>(null)
 const mounted = ref(false)
 const autoScale = ref(1)
 
@@ -138,13 +140,18 @@ watch(
 onBeforeUnmount(() => observer?.disconnect())
 
 /**
- * 模板里的自适应还在逐档试缩时不导出，免得截到中间态。
- * 模板是异步组件，它自己挂在 window 上的调试钩子不算数，必须用组件实例的 ref。
+ * 导出前让自适应按当前真实盒子重算一遍并收敛。
+ *
+ * 光「等它自己收敛」不够：手机端停在别的 Tab 上时卡片是 `display: none`，
+ * 自适应是在零尺寸下算的，那时候收敛的是错的。导出时卡片刚被支起来有了布局，
+ * 必须重算，否则导出图沿用「什么都放得下」的旧结论，正文会溢出。
  */
 async function waitUntilSettled() {
-  const instance = (templateComponent.value as unknown as ComponentPublicInstance | null)?.$
-  const fn = (instance?.exposed as { waitForSettle?: () => Promise<void> } | undefined)?.waitForSettle
-  await fn?.()
+  const exposed = templateRef.value?.$?.exposed as
+    | { refit?: () => Promise<void>; waitForSettle?: () => Promise<void> }
+    | undefined
+  if (exposed?.refit) await exposed.refit()
+  else await exposed?.waitForSettle?.()
 }
 
 defineExpose({ measure, cardEl, waitUntilSettled })
@@ -161,7 +168,7 @@ defineExpose({ measure, cardEl, waitUntilSettled })
         :data-export-style="exportMeta"
       >
         <div class="preview-card__inner">
-          <component :is="templateComponent" v-if="templateComponent" :card="card" :style="style" />
+          <component :is="templateComponent" v-if="templateComponent" ref="templateRef" :card="card" :style="style" />
         </div>
       </div>
     </div>

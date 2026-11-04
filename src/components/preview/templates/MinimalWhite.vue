@@ -9,8 +9,8 @@ import Watermark from '../parts/Watermark.vue'
 const props = defineProps<{ card: CardData; style: CardStyle; primaryColor?: string }>()
 
 const contentEl = ref<HTMLElement | null>(null)
-const { scale, balance, waitForSettle } = useAutoFit(contentEl, () => [props.card, props.style])
-defineExpose({ waitForSettle })
+const { scale, balance, refit, waitForSettle } = useAutoFit(contentEl, () => [props.card, props.style])
+defineExpose({ refit, waitForSettle })
 /**
  * 内容装得下时把版心竖着居中，别把半张卡空在下边。
  * 装不下（balance 被标成 1 = 溢出）时交还给 flex 自己排，溢出方向由模板决定。
