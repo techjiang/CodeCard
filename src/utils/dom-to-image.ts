@@ -279,6 +279,12 @@ function preferBreak(chars: string[], cut: number): number {
 }
 
 /**
+ * 中文标点不能出现在行首（避头尾）。浏览器遇到这种情况会把它「悬挂」到上一行的
+ * 行盒之外 —— 行盒量出来的宽度不含它，行首看着也没有它。
+ */
+const NO_LINE_START = '，。、；：？！）》」』】…—,.;:?!)]}'
+
+/**
  * 贪心断行：一行能塞多少塞多少，回退到最近的合法断点。
  * 只按宽度切的话会把词从中间劈开，导出的换行位置就和预览对不上。
  */
@@ -290,7 +296,15 @@ function greedyLines(ctx: CanvasRenderingContext2D, text: string, limit: number)
     // 量整串前缀而不是逐字累加：字距、连字都会让单字宽度之和偏大
     let fit = start
     while (fit < chars.length && ctx.measureText(chars.slice(start, fit + 1).join('')).width <= limit + 1) fit++
-    let cut = fit >= chars.length ? chars.length : start + preferBreak(chars.slice(start), Math.max(1, fit - start))
+    if (fit >= chars.length) {
+      lines.push(chars.slice(start).join('').trim())
+      break
+    }
+    let cut = start + preferBreak(chars.slice(start), Math.max(1, fit - start))
+    // 断在标点前就把它一起带上：浏览器会把行末标点悬挂到行盒之外 ——
+    // 行盒宽度不含它，行首也看不到它。不模拟这一步，句号就被挤到下一行，
+    // 孤零零占一整行。
+    while (cut < chars.length && NO_LINE_START.includes(chars[cut])) cut++
     if (cut <= start) cut = start + 1
     lines.push(chars.slice(start, cut).join('').trim())
     start = cut
@@ -301,8 +315,10 @@ function greedyLines(ctx: CanvasRenderingContext2D, text: string, limit: number)
 /**
  * 一段文字在一个固定宽度里会排成哪几行。
  *
- * 有真实行盒就能验证：按行盒宽切出来的行，前几行应当贴着行盒右边缘。
- * 对不上说明切歪了，这时宁可整段画（可能出一行略宽）也不要错行。
+ * 有真实行盒就能验证：按行盒宽切出来的行，前几行应当贴着行盒右边缘，
+ * 且每一行都不该比浏览器给的那条行盒更宽。对不上说明切歪了，
+ * 这时把宽度收到「浏览器真排出来的最宽一行」再切一次；
+ * 还不行就整段画（可能出一行略宽）也不要错行。
  * 量不出字宽的环境（jsdom）直接整段返回。
  */
 function splitLines(
@@ -312,24 +328,43 @@ function splitLines(
   ctx: CanvasRenderingContext2D | null,
   /** 已知浏览器把这段文字断成了几行时传进来，切出来的行数得对得上 */
   expectLines = 0,
+  /** 浏览器每行的行盒宽度（CSS px），用来验切出来的行是不是塞多了 */
+  lineBoxes: number[] = [],
 ): string[] {
   if (!ctx || width <= 0) return [text]
   // 量不了字就别断（jsdom 之类的环境），否则断出来的位置反而是错的
   if (typeof ctx.measureText !== 'function') return [text]
   applyFont(ctx, style)
-  // 行盒宽度就是这段文字真正能用的宽度
-  const limit = width
 
-  const lines = greedyLines(ctx, text, limit)
-  // 除末行外都要贴着右边缘才对得上浏览器的排版
-  const tolerance = ctx.measureText('中').width * 0.75
-  const clean = lines
-    .slice(0, -1)
-    .every((line) => Math.abs(ctx.measureText(line).width - limit) <= tolerance)
-  if (!clean) return [text]
-  // 浏览器断成了几行，我们切出来就得是几行，否则交给调用方决定（多半是行盒不可信）
-  if (expectLines && lines.length !== expectLines) return [text]
-  return lines
+  // 容差必须容得下「少排一个字」：中文按整字取整，行末还剩不到一个字的宽度时
+  // 下一个字就排不进去，这一行自然比可用宽度短一截。按半个字宽算会把正常排版判成歪的。
+  const widestChar = Array.from(text).reduce((max, ch) => Math.max(max, ctx.measureText(ch).width), 0)
+  const tol = widestChar + 2
+  // 行数对不上时，逐行比宽没有意义（下标已经错位）
+  const sameCount = !expectLines || lineBoxes.length === expectLines
+  // 行盒给的是实际排出来的宽度：塞超过它，说明贪心多啃了一个字
+  const overflowsBox = (lines: string[]) =>
+    sameCount &&
+    lines.length === lineBoxes.length &&
+    lineBoxes.some((box, i) => lines[i] !== undefined && ctx.measureText(lines[i]).width > box + 2)
+  const cleanEdges = (lines: string[]) =>
+    lines.slice(0, -1).every((line) => Math.abs(ctx.measureText(line).width - width) <= tol)
+
+  let limit = width
+  let lines = greedyLines(ctx, text, limit)
+  // 第一轮就该对上：行数一致、没超出行盒、除末行外都贴边
+  if ((!expectLines || lines.length === expectLines) && !overflowsBox(lines) && cleanEdges(lines)) return lines
+
+  // 收窄到浏览器真排出来的最宽一行再切一次。行盒宽度是浏览器算出来的，
+  // 一定塞得下，用它当上限不会把行切得更碎，只是别再多啃一个字
+  const widest = Math.max(0, ...lineBoxes.slice(0, -1))
+  if (widest > 0 && widest < limit) {
+    limit = widest
+    lines = greedyLines(ctx, text, limit)
+    if ((!expectLines || lines.length === expectLines) && !overflowsBox(lines) && cleanEdges(lines)) return lines
+  }
+  // 切不准就整段画：宁可出一行略宽，也不要断错位置
+  return [text]
 }
 
 /**
@@ -347,13 +382,17 @@ function collectWidth(el: HTMLElement): number {
   }
   const host = box ?? el
   const cs = window.getComputedStyle(host)
-  // clientWidth 是取整的布局值；行内元素量不到它时退回实测盒子宽度
-  const layoutWidth = host.clientWidth || host.getBoundingClientRect().width
-  const width =
-    layoutWidth - px(cs.paddingLeft) - px(cs.paddingRight) - px(cs.borderLeftWidth) - px(cs.borderRightWidth)
-  // 自己身上如果也带内边距（行内代码、标签胶囊），再扣一次：它们只影响自己这一段，不影响整行
+  const padX = px(cs.paddingLeft) + px(cs.paddingRight)
+  // clientWidth 已经是「含内边距、不含边框」的布局值，所以只扣内边距。
+  // 之前连边框一起扣，引用块那条 3px 左边线就被多扣了一次，
+  // 切出来的行比浏览器短 3px —— 刚好够把一个句号挤到下一行。
+  const inner = host.clientWidth
+  const width = inner > 0 ? inner - padX : host.getBoundingClientRect().width - padX - px(cs.borderLeftWidth) - px(cs.borderRightWidth)
+  // 自己身上如果也带内边距（行内代码、标签胶囊），再扣一次：它们只影响自己这一段，不影响整行。
+  // 但 el 本身就是那个块级宿主时（引用块、段落），上面扣的就是它自己的内边距，
+  // 再扣一遍等于白扣掉一整段行首留白，切出来的行会比浏览器短一截。
   const own = window.getComputedStyle(el)
-  const ownPadding = px(own.paddingLeft) + px(own.paddingRight)
+  const ownPadding = host === el ? 0 : px(own.paddingLeft) + px(own.paddingRight)
   const usable = width - ownPadding
   // 布局宽度拿不到（无头环境、隐藏的预览）就退回元素自己的盒子宽度
   return usable > 0 ? usable : Math.max(0, fallbackWidth(host) - ownPadding)
@@ -366,6 +405,32 @@ function collectWidth(el: HTMLElement): number {
 function fallbackWidth(el: HTMLElement): number {
   const cs = window.getComputedStyle(el)
   return Math.max(0, el.getBoundingClientRect().width - px(cs.paddingLeft) - px(cs.paddingRight))
+}
+
+/**
+ * 把 Range 给的矩形按视觉行归组。
+ *
+ * 一条视觉行可能被拆成好几个矩形：中英混排、行内样式的边界都会切一刀。
+ * 直接拿矩形个数当行数、拿矩形宽度当行宽，切行就会越切越碎
+ * （引用块里那句「…留在下一行。」就是这么被整段吞成一行的）。
+ */
+function groupByLine(rects: DOMRect[], k: number): Array<{ left: number; right: number; top: number; height: number }> {
+  const lines: Array<{ left: number; right: number; top: number; height: number }> = []
+  for (const rect of rects) {
+    if (rect.width <= 0 || rect.height <= 0) continue
+    const top = rect.top / k
+    const height = rect.height / k
+    const hit = lines.find((l) => Math.abs(l.top - top) < Math.max(2, height * 0.5))
+    if (hit) {
+      hit.left = Math.min(hit.left, rect.left / k)
+      hit.right = Math.max(hit.right, rect.right / k)
+      hit.top = Math.min(hit.top, top)
+      hit.height = Math.max(hit.height, height)
+    } else {
+      lines.push({ left: rect.left / k, right: rect.right / k, top, height })
+    }
+  }
+  return lines.sort((a, b) => a.top - b.top)
 }
 
 /** Range 给的行盒（部分环境，比如 jsdom，没有这个能力） */
@@ -477,16 +542,27 @@ function collectRuns(el: HTMLElement, rootRect: DOMRect, out: InlineRun[]): bool
       // 不能用行盒的宽度——块里夹着行内代码时，浏览器给散字矩形的宽度是整行宽度。
       const anchor = rects[0]
       if (!anchor || anchor.height <= 0) continue
-      const width = collectWidth(el) / totalScale(el)
+      // collectWidth 读的是 clientWidth —— 已经是布局像素，别再除一次预览缩放。
+      // 除了就会在缩放预览下把可用宽度放大 1/scale 倍（缩到 40% 时放大 2.5 倍），
+      // 切出来的行比浏览器长得多，整段被吞成一行。
+      const width = collectWidth(el)
       // 用这一块实测的行宽当基准；算不出来再退回元素宽度
       const rowWidth = Math.min(width, blockRowWidth || width)
-      const wrapped = splitLines(text, style, rowWidth, measureCtx(), rects.length)
+      const kEl = totalScale(el)
+      const visualLines = groupByLine(rects, kEl)
+      const wrapped = splitLines(
+        text,
+        style,
+        rowWidth,
+        measureCtx(),
+        visualLines.length,
+        visualLines.map((l) => l.right - l.left),
+      )
       // 浏览器把这段文字断成了几行，我们按宽度切出来却是另一种断法 —— 行盒不可信
       // （典型是块里夹行内代码，浏览器被零宽断点带着走了）。
       // 这时按可用宽度自己重排，只是不再拿原行盒去裁切。
-      const rewrap = hasInlineBlock(el) || (rects.length > 1 && wrapped.length !== rects.length)
+      const rewrap = hasInlineBlock(el) || (visualLines.length > 1 && wrapped.length !== visualLines.length)
       if (rewrap) ok = false
-      const kEl = totalScale(el)
       out.push({
         text: wrapped.join(''),
         lines: wrapped,
@@ -498,7 +574,7 @@ function collectRuns(el: HTMLElement, rootRect: DOMRect, out: InlineRun[]): bool
         })),
         x: (anchor.left - rootRect.left) / kEl,
         top: (anchor.top - rootRect.top) / kEl,
-        width: collectWidth(el) / kEl,
+        width: collectWidth(el),
         height: anchor.height / kEl,
         style,
         el,
@@ -713,11 +789,45 @@ function paintBackground(
   ctx.restore()
 }
 
-function hasVisibleBorder(cs: CSSStyleDeclaration): boolean {
-  const width = px(cs.borderTopWidth)
-  return !!width && cs.borderTopStyle !== 'none' && cs.borderTopColor !== 'rgba(0, 0, 0, 0)'
+const SIDES = ['Top', 'Right', 'Bottom', 'Left'] as const
+type Side = (typeof SIDES)[number]
+
+interface SideBorder {
+  side: Side
+  width: number
+  color: string
 }
 
+/**
+ * 四条边各自判定。
+ *
+ * 只认 `border-top` 是错的：引用块的竖线用的是 `border-left`，
+ * `currentColor` 在计算样式里已经算成了具体颜色。
+ */
+function sideBorders(cs: CSSStyleDeclaration): SideBorder[] {
+  const out: SideBorder[] = []
+  for (const side of SIDES) {
+    const width = px(cs[`border${side}Width` as 'borderTopWidth'])
+    if (!width) continue
+    const style = cs[`border${side}Style` as 'borderTopStyle']
+    const color = cs[`border${side}Color` as 'borderTopColor']
+    if (style === 'none' || style === 'hidden' || color === 'rgba(0, 0, 0, 0)' || color === 'transparent') continue
+    out.push({ side, width, color })
+  }
+  return out
+}
+
+function hasVisibleBorder(cs: CSSStyleDeclaration): boolean {
+  return sideBorders(cs).length > 0
+}
+
+/**
+ * 画边框。
+ *
+ * 四条边一起 `strokeRect` 只对「四边同宽同色」成立，所以按边分开画；
+ * 有圆角时整圈仍用 `roundRect` 描一遍（好看且不会在圆角处留豁口），
+ * 但描边宽度取这条边自己的值，颜色按边设。
+ */
 function paintBorder(
   ctx: CanvasRenderingContext2D,
   el: HTMLElement,
@@ -726,24 +836,40 @@ function paintBorder(
   rootRect: DOMRect,
   scale: number,
 ) {
-  const width = px(cs.borderTopWidth)
-  if (!hasVisibleBorder(cs)) return
+  const borders = sideBorders(cs)
+  if (!borders.length) return
   const nb = norm(rect, rootRect, el)
   const x = nb.left * scale
   const y = nb.top * scale
   const w = nb.width * scale
   const h = nb.height * scale
-  ctx.strokeStyle = cs.borderTopColor
-  ctx.lineWidth = width * scale
   const radius = px(cs.borderTopLeftRadius) * scale
+
   if (radius > 0) {
+    for (const b of borders) {
+      const lw = b.width * scale
+      ctx.save()
+      ctx.beginPath()
+      // 描边中心线内缩半个线宽：圆角处不能靠裁剪切，直接按内缩的圆角走线
+      roundRect(ctx, x + lw / 2, y + lw / 2, w - lw, h - lw, Math.max(0, radius - lw / 2))
+      ctx.strokeStyle = b.color
+      ctx.lineWidth = lw
+      ctx.stroke()
+      ctx.restore()
+    }
+    return
+  }
+
+  // 直角：一条边一根实心矩形，比描边准（描边会被取整啃掉半像素）
+  for (const b of borders) {
+    const lw = b.width * scale
     ctx.save()
-    ctx.beginPath()
-    roundRect(ctx, x + (width * scale) / 2, y + (width * scale) / 2, w - width * scale, h - width * scale, radius)
-    ctx.stroke()
+    ctx.fillStyle = b.color
+    if (b.side === 'Top') ctx.fillRect(x, y, w, lw)
+    else if (b.side === 'Bottom') ctx.fillRect(x, y + h - lw, w, lw)
+    else if (b.side === 'Left') ctx.fillRect(x, y, lw, h)
+    else ctx.fillRect(x + w - lw, y, lw, h)
     ctx.restore()
-  } else {
-    ctx.strokeRect(x + (width * scale) / 2, y + (width * scale) / 2, w - width * scale, h - width * scale)
   }
 }
 
@@ -774,7 +900,7 @@ function paintText(ctx: CanvasRenderingContext2D, el: HTMLElement, cs: CSSStyleD
   // 只能拿这一块里最宽的那条行盒当基准。
   // 最宽的那条都填不满元素宽度时，说明这块是被断点拆碎的，只能按元素宽度重排
   // 元素能排字的宽度；量不到才用"这一块最宽的行盒 − 自己的内边距"来估
-  const boxWidth = collectWidth(el) / totalScale(el)
+  const boxWidth = collectWidth(el)
   const measured = maxRowWidth(el) / totalScale(el) - px(cs.paddingLeft) - px(cs.paddingRight)
   blockRowWidth = boxWidth > 0 ? boxWidth : measured
   const runs: InlineRun[] = []

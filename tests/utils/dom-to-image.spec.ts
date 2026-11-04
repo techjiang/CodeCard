@@ -217,7 +217,7 @@ describe('导出渲染：背景与边框', () => {
     expect(callsOf('clip')).toHaveLength(0)
   })
 
-  test('边框按 1x 宽度与圆角绘制', async () => {
+  test('圆角边框按边描线，线宽与颜色都按 2x 折算', async () => {
     const root = styled(fakeRect(document.createElement('div'), 100, 100), {
       backgroundColor: 'rgb(255, 255, 255)',
       border: '2px solid rgb(255, 0, 0)',
@@ -225,20 +225,72 @@ describe('导出渲染：背景与边框', () => {
     })
     document.body.appendChild(root)
     await renderElementToCanvas(root, { scale: 2, width: 100, height: 100 })
-    expect(callsOf('lineWidth')[0]).toEqual(['lineWidth', 4])
+    // 四边各描一次：线宽不同、颜色不同的边框靠一次 strokeRect 是画不对的
+    expect(callsOf('lineWidth')).toEqual([
+      ['lineWidth', 4],
+      ['lineWidth', 4],
+      ['lineWidth', 4],
+      ['lineWidth', 4],
+    ])
     expect(callsOf('strokeStyle')[0]).toEqual(['strokeStyle', 'rgb(255, 0, 0)'])
-    expect(callsOf('stroke')).toHaveLength(1)
+    expect(callsOf('stroke')).toHaveLength(4)
     expect(callsOf('strokeRect')).toHaveLength(0)
   })
 
-  test('直角边框走 strokeRect，并内缩半个线宽', async () => {
+  test('直角边框按边填矩形，不再用 strokeRect', async () => {
     const root = styled(fakeRect(document.createElement('div'), 100, 100), {
       backgroundColor: 'rgb(255, 255, 255)',
       border: '2px solid rgb(0, 255, 0)',
     })
     document.body.appendChild(root)
     await renderElementToCanvas(root, { scale: 2, width: 100, height: 100 })
-    expect(callsOf('strokeRect')[0]).toEqual(['strokeRect', 2, 2, 196, 196])
+    // 2x：100 CSS px 的卡片，边框 2px → 4 设备像素
+    // 前三次是整张画布的兜底底色（一次 fillRect，两次同样大小的是 root 自己的背景层），只取最后四条边框
+    expect(callsOf('fillRect').slice(-4)).toEqual([
+      ['fillRect', 0, 0, 200, 4], // 上
+      ['fillRect', 196, 0, 4, 200], // 右
+      ['fillRect', 0, 196, 200, 4], // 下
+      ['fillRect', 0, 0, 4, 200], // 左
+    ])
+    expect(callsOf('strokeRect')).toHaveLength(0)
+  })
+
+  test('只有 border-left 的元素也画得出竖线', async () => {
+    // 引用块的竖线用的是 border-left，只认 border-top 会整条丢掉
+    const root = styled(fakeRect(document.createElement('div'), 100, 100), {
+      borderLeft: '3px solid rgb(0, 0, 0)',
+      borderTopWidth: '0px',
+      borderRightWidth: '0px',
+      borderBottomWidth: '0px',
+    })
+    root.textContent = '引用'
+    document.body.appendChild(root)
+    await renderElementToCanvas(root, { scale: 1, width: 100, height: 100 })
+    expect(callsOf('fillRect')).toContainEqual(['fillRect', 0, 0, 3, 100])
+  })
+
+  test('四条边宽度与颜色各不相同的元素逐边绘制', async () => {
+    const root = styled(fakeRect(document.createElement('div'), 100, 100), {
+      borderTop: '2px solid rgb(255, 0, 0)',
+      borderRight: '4px solid rgb(0, 255, 0)',
+      borderBottom: '6px solid rgb(0, 0, 255)',
+      borderLeft: '8px solid rgb(255, 255, 0)',
+    })
+    root.textContent = '四边'
+    document.body.appendChild(root)
+    await renderElementToCanvas(root, { scale: 1, width: 100, height: 100 })
+    const rects = callsOf('fillRect').slice(-4)
+    expect(rects).toEqual([
+      ['fillRect', 0, 0, 100, 2],
+      ['fillRect', 96, 0, 4, 100],
+      ['fillRect', 0, 94, 100, 6],
+      ['fillRect', 0, 0, 8, 100],
+    ])
+    const colors = callsOf('fillStyle').map((c) => c[1])
+    expect(colors).toContain('rgb(255, 0, 0)')
+    expect(colors).toContain('rgb(0, 255, 0)')
+    expect(colors).toContain('rgb(0, 0, 255)')
+    expect(colors).toContain('rgb(255, 255, 0)')
   })
 
   test('无边框不描边', async () => {
@@ -246,6 +298,7 @@ describe('导出渲染：背景与边框', () => {
     document.body.appendChild(root)
     await renderElementToCanvas(root, { scale: 1, width: 100, height: 100 })
     expect(callsOf('strokeRect')).toHaveLength(0)
+    expect(callsOf('stroke')).toHaveLength(0)
   })
 })
 
@@ -597,5 +650,96 @@ describe('导出渲染：装饰 SVG', () => {
     } finally {
       ;(globalThis as unknown as { Image: unknown }).Image = RealImage
     }
+  })
+})
+
+describe('导出渲染：中文行末标点', () => {
+  /**
+   * 浏览器会把行末的中文标点「悬挂」到行盒之外：行盒宽度不含它，行首也看不到它。
+   * 切行时不模拟这一步，句号就会被挤到下一行，孤零零占一整行。
+   */
+  function withFont<T extends HTMLElement>(el: T): T {
+    el.style.setProperty('font-size', '20px')
+    el.style.setProperty('font-family', 'sans-serif')
+    return el
+  }
+
+  const realRange = Range.prototype.getClientRects
+
+  afterEach(() => {
+    Range.prototype.getClientRects = realRange
+  })
+
+  /** 让整段文字拿到固定的两行行盒 */
+  function fakeLines(rects: Array<[number, number, number, number]>, fullText: string) {
+    Range.prototype.getClientRects = function (this: Range) {
+      const text = this.toString()
+      if (!text.trim()) return [] as never
+      return (text === fullText ? rects : []).map(([x, y, w, h]) => ({
+        x,
+        y,
+        left: x,
+        top: y,
+        right: x + w,
+        bottom: y + h,
+        width: w,
+        height: h,
+      })) as never
+    } as never
+  }
+
+  test('句号跟着上一行走，不会单独占一行', async () => {
+    const text = '一二三四五六七八九十。'
+    const root = fakeRect(document.createElement('div'), 220, 400, 0, 0)
+    const p = withFont(fakeRect(document.createElement('p'), 220, 80, 0, 0))
+    Object.defineProperty(p, 'clientWidth', { value: 220, configurable: true })
+    p.textContent = text
+    root.appendChild(p)
+    document.body.appendChild(root)
+    // 浏览器排成两行：前十个字占 200px，句号悬挂在行盒外
+    fakeLines(
+      [
+        [0, 0, 200, 24],
+        [0, 30, 20, 24],
+      ],
+      text,
+    )
+    await renderElementToCanvas(root, { scale: 1, width: 220, height: 400 })
+    const drawn = texts().join('')
+    // 句号必须和正文在同一段里，而不是自己一段
+    expect(drawn).toContain('。')
+    expect(texts().every((line) => line.replace(/\s/g, '') !== '。')).toBe(true)
+  })
+})
+
+describe('导出渲染：可用宽度', () => {
+  test('块级宿主自己的内边距只扣一次', async () => {
+    const root = fakeRect(document.createElement('div'), 300, 400, 0, 0)
+    const p = styled(fakeRect(document.createElement('div'), 300, 80), {
+      fontSize: '20px',
+      paddingLeft: '20px',
+      paddingRight: '20px',
+    })
+    // clientWidth 在真实浏览器里已经扣掉内边距，但仍是「含内边距的内容盒 + 内边距」，
+    // 这里给 300 表示元素总宽就是 300
+    Object.defineProperty(p, 'clientWidth', { value: 300, configurable: true })
+    // 13 个字刚好卡在 260px（300 扣一次内边距）里；再扣一次只剩 220px，会被切成两行
+    p.textContent = '一二三四五六七八九十一二三'
+    root.appendChild(p)
+    document.body.appendChild(root)
+    await renderElementToCanvas(root, { scale: 1, width: 300, height: 400 })
+    expect(texts()).toEqual(['一二三四五六七八九十一二三'])
+  })
+
+  test('clientWidth 为 0 时退回实测盒子宽度', async () => {
+    const root = fakeRect(document.createElement('div'), 200, 400, 0, 0)
+    const p = styled(fakeRect(document.createElement('div'), 100, 80), { fontSize: '20px' })
+    Object.defineProperty(p, 'clientWidth', { value: 0, configurable: true })
+    p.textContent = '一二三四五六七八九十'
+    root.appendChild(p)
+    document.body.appendChild(root)
+    await renderElementToCanvas(root, { scale: 1, width: 200, height: 400 })
+    // 退回盒子宽度 100px → 每行 5 个字
+    expect(texts()).toEqual(['一二三四五', '六七八九十'])
   })
 })
