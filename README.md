@@ -75,8 +75,8 @@ npm run typecheck # 类型检查
 | 样式 | Tailwind CSS 3 | 设计令牌走 `tailwind.config.ts` |
 | 导出 | 自研 DOM → Canvas | 不走 html2canvas，体积小、结果可预测 |
 | 高亮 | 手写分词器 | 按行输出 token，行号对齐稳、截图不抖 |
-| 测试 | Vitest + jsdom | 171 个用例，语句覆盖 93% |
-| E2E | Vitest + Playwright | 21 个浏览器用例 |
+| 测试 | Vitest + jsdom | 188 个用例，语句覆盖 94% |
+| E2E | Vitest + Playwright | 27 个浏览器用例 |
 
 ### 为什么不用 html2canvas
 
@@ -141,8 +141,8 @@ src/
 
 两层，各管一段：
 
-- **`npm run test`** —— jsdom 里的单元测试，171 个用例，语句覆盖 93%。导出渲染器的绘制逻辑靠伪造 `getBoundingClientRect` + 假 Canvas 上下文录调用断言
-- **`npm run test:e2e`** —— 真实 Chromium，21 个用例。自适应缩放、导出像素、圆角/透明度/水印、中文断行这些**依赖真实排版和真实画布**的东西只能在这里验，jsdom 里 `measureText` 恒返回 0，测出来是自欺欺人
+- **`npm run test`** —— jsdom 里的单元测试，188 个用例，语句覆盖 94%。导出渲染器的绘制逻辑靠伪造 `getBoundingClientRect` + 假 Canvas 上下文录调用断言
+- **`npm run test:e2e`** —— 真实 Chromium，27 个用例。自适应缩放、导出像素、圆角/透明度/水印、中文断行这些**依赖真实排版和真实画布**的东西只能在这里验，jsdom 里 `measureText` 恒返回 0，测出来是自欺欺人
 
 单测覆盖：导出渲染器（渐变坐标换算、圆角裁剪、边框内缩、换行与对齐、flex 子项不粘连、缩放折算、SVG 装饰加载失败兜底）、12 套模板 × 6 种卡片类型全组合渲染、预览容器自动缩放比例与重测量。
 
