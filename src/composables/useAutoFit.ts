@@ -9,9 +9,35 @@ const MIN_CHARS_PER_LINE = 16
 const NO_LINE_START = '，。、；：？！）》」』】…—,.;:?!)]}'
 const MAX_STEPS = 14
 
-/** 元素按内容撑开时的高度 */
+/**
+ * 元素按内容撑开时的高度，单位是 CSS px（没被 transform 缩过）。
+ *
+ * `getBoundingClientRect()` 给的是 transform 之后的值 —— 预览区把卡片缩到 40%，
+ * 量出来只剩四成，长文于是永远判为「放得下」，原尺寸硬塞，
+ * 正文被压进 `.cc-body` 那点高度里、溢出到标签和页脚上。
+ * 预览的缩放比例各处一样，折算回布局尺寸后各段高度仍然是可比的。
+ */
 function naturalHeight(el: HTMLElement): number {
-  return Math.max(el.scrollHeight, el.offsetHeight, el.getBoundingClientRect().height)
+  const rect = el.getBoundingClientRect()
+  return Math.max(el.scrollHeight, el.offsetHeight, rect.height / transformScale(el))
+}
+
+/** 元素累乘的 CSS transform 缩放比例（预览整体缩放的倍数） */
+function transformScale(el: HTMLElement): number {
+  let scale = 1
+  let node: HTMLElement | null = el
+  while (node) {
+    const t = getComputedStyle(node).transform
+    if (t && t !== 'none') {
+      const m = /matrix\(([^)]+)\)/.exec(t)
+      if (m) {
+        const n = m[1].split(',').map(Number)
+        if (n.length >= 2 && n[0] > 0) scale *= n[0]
+      }
+    }
+    node = node.parentElement
+  }
+  return scale > 0 ? scale : 1
 }
 
 /** .cc-content 的总自然高度（含 gap，正文按内容撑开算） */

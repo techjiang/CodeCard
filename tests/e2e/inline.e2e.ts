@@ -62,6 +62,28 @@ describe('导出：行内排版', () => {
     expect(coverage).toBeLessThan(0.55)
   }, 60_000)
 
+  test('正文里的断点是零宽空格，不是成片的 <wbr> 与空文本节点', async () => {
+    const page = await openApp()
+    await seedCard(page, { type: 'knowledge', title: '断点', content: RICH_MD })
+    await pickTemplate(page, '终端黑')
+
+    const dom = await page.evaluate(() => {
+      const p = document.querySelector<HTMLElement>('[data-card-export] .md-p')!
+      const textNodes = Array.from(p.childNodes).filter((n): n is Text => n.nodeType === Node.TEXT_NODE)
+      return {
+        wbr: p.querySelectorAll('wbr').length,
+        // 空的文本节点导出时要逐个去量行盒，是白掉帧的碎片
+        emptyText: textNodes.filter((n) => !(n.textContent ?? '').trim()).length,
+        textNodes: textNodes.length,
+        hasZwsp: (p.textContent ?? '').includes('\u200B'),
+      }
+    })
+    expect(dom.wbr).toBe(0)
+    expect(dom.hasZwsp).toBe(true)
+    // 空节点只要不是主体就行；纯文本体量远超它们，说明模板没被缩进空白淹掉
+    expect(dom.emptyText).toBeLessThan(dom.textNodes)
+  }, 60_000)
+
   test('长标识符不被零宽断点切成碎字', async () => {
     const page = await openApp()
     await seedCard(page, { type: 'knowledge', title: '长标识符', content: RICH_MD })

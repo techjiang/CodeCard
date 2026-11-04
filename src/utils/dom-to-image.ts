@@ -23,14 +23,69 @@ function px(value: string | null | undefined): number {
 
 /** 预览区可能对卡片做了 CSS 缩放，这里把视觉尺寸折算回设计尺寸 */
 let cssScale = 1
+/**
+ * 每个元素自己叠加的缩放倍率（自适应放大时内容整体乘一个倍率撑满卡片）。
+ *
+ * 这类缩放同时改位置、尺寸和字号，而且不是叠在 cssScale 上的一层，
+ * 所以各级元素各记一个倍率，折算回设计尺寸时除掉它。
+ */
+const zoomOf = new WeakMap<Element, number>()
+
+function zoomFactor(el: Element | null | undefined): number {
+  let k = 1
+  let node: Element | null = el ?? null
+  while (node) {
+    k *= zoomOf.get(node) ?? 1
+    node = node.parentElement
+  }
+  return k
+}
+
+/**
+ * 元素自身的缩放倍率。
+ *
+ * 以自定义属性 --cc-fit 为准：zoom 读不到（Chrome 会把计算值折回 1、
+ * Safari 干脆不认这个属性），而 --cc-fit 是我们自己写上去的内容倍率，
+ * 两种浏览器都读得到。
+ */
+function zoomValue(el: HTMLElement, cs: CSSStyleDeclaration): number {
+  const candidates = [cs.getPropertyValue('--cc-fit'), el.style?.zoom, cs.zoom]
+  for (const raw of candidates) {
+    const n = parseFloat((raw ?? '').trim())
+    if (Number.isFinite(n) && n > 0 && n !== 1) return n
+  }
+  return 1
+}
+
+/** 元素自身（含祖先）的 CSS transform 缩放 */
+function transformFactor(el: Element | null | undefined): number {
+  let k = 1
+  let node: Element | null = el ?? null
+  while (node) {
+    const t = (node as HTMLElement).style?.transform || ''
+    const m = /matrix\(([^)]+)\)/.exec(t)
+    if (m) {
+      const n = m[1].split(',').map(Number)
+      if (n.length >= 2 && n[0] > 0) k *= n[0]
+    }
+    node = node.parentElement
+  }
+  return k
+}
+
+/** 元素相对设计稿的累计倍率：预览缩放 × 各级 transform × 各级 zoom */
+function totalScale(el: Element | null | undefined): number {
+  return cssScale * transformFactor(el) * zoomFactor(el)
+}
 let lastCtx: CanvasRenderingContext2D | null = null
 
-function norm(rect: DOMRect, rootRect: DOMRect) {
+function norm(rect: DOMRect, rootRect: DOMRect, el?: Element | null) {
+  const k = el ? totalScale(el) : cssScale
   return {
-    left: (rect.left - rootRect.left) / cssScale,
-    top: (rect.top - rootRect.top) / cssScale,
-    width: rect.width / cssScale,
-    height: rect.height / cssScale,
+    left: (rect.left - rootRect.left) / k,
+    top: (rect.top - rootRect.top) / k,
+    width: rect.width / k,
+    height: rect.height / k,
   }
 }
 
@@ -359,7 +414,7 @@ interface InlineRun {
 function paintReplaced(el: HTMLElement, rect: DOMRect, rootRect: DOMRect, scale: number) {
   if (el.tagName?.toUpperCase() !== 'IMG') return
   const img = el as HTMLImageElement
-  const nb = norm(rect, rootRect)
+  const nb = norm(rect, rootRect, el)
   const draw = () => {
     const ctx = lastCtx
     if (!ctx) return
@@ -415,7 +470,7 @@ function collectRuns(el: HTMLElement, rootRect: DOMRect, out: InlineRun[]): bool
       // 不能用行盒的宽度——块里夹着行内代码时，浏览器给散字矩形的宽度是整行宽度。
       const anchor = rects[0]
       if (!anchor || anchor.height <= 0) continue
-      const width = collectWidth(el) / cssScale
+      const width = collectWidth(el) / totalScale(el)
       // 用这一块实测的行宽当基准；算不出来再退回元素宽度
       const rowWidth = Math.min(width, blockRowWidth || width)
       const wrapped = splitLines(text, style, rowWidth, measureCtx(), rects.length)
@@ -424,19 +479,20 @@ function collectRuns(el: HTMLElement, rootRect: DOMRect, out: InlineRun[]): bool
       // 这时按可用宽度自己重排，只是不再拿原行盒去裁切。
       const rewrap = hasInlineBlock(el) || (rects.length > 1 && wrapped.length !== rects.length)
       if (rewrap) ok = false
+      const kEl = totalScale(el)
       out.push({
         text: wrapped.join(''),
         lines: wrapped,
         boxes: rects.map((r) => ({
-          x: (r.left - rootRect.left) / cssScale,
-          top: (r.top - rootRect.top) / cssScale,
-          width: r.width / cssScale,
-          height: r.height / cssScale,
+          x: (r.left - rootRect.left) / kEl,
+          top: (r.top - rootRect.top) / kEl,
+          width: r.width / kEl,
+          height: r.height / kEl,
         })),
-        x: (anchor.left - rootRect.left) / cssScale,
-        top: (anchor.top - rootRect.top) / cssScale,
-        width: collectWidth(el) / cssScale,
-        height: anchor.height / cssScale,
+        x: (anchor.left - rootRect.left) / kEl,
+        top: (anchor.top - rootRect.top) / kEl,
+        width: collectWidth(el) / kEl,
+        height: anchor.height / kEl,
         style,
         el,
         rewrap,
@@ -459,15 +515,16 @@ function collectRuns(el: HTMLElement, rootRect: DOMRect, out: InlineRun[]): bool
       const text = (node.textContent ?? '').replace(/\s+/g, ' ')
       if (rects.length && text.trim()) {
         // 跨行���每行一个矩形；文字按行盒宽度切开后逐行裁切绘制
-        const wrapWidth = Math.min(...rects.map((r) => r.width)) / cssScale
+        const kNode = totalScale(node)
+        const wrapWidth = Math.min(...rects.map((r) => r.width)) / kNode
         const lines = splitLines(text, cs, wrapWidth, measureCtx(), rects.length)
         const boxes = rects
           .filter((rect) => rect.width > 0 && rect.height > 0)
           .map((rect) => ({
-            x: (rect.left - rootRect.left) / cssScale,
-            top: (rect.top - rootRect.top) / cssScale,
-            width: rect.width / cssScale,
-            height: rect.height / cssScale,
+            x: (rect.left - rootRect.left) / kNode,
+            top: (rect.top - rootRect.top) / kNode,
+            width: rect.width / kNode,
+            height: rect.height / kNode,
           }))
         if (boxes.length) {
           out.push({
@@ -502,6 +559,33 @@ function groupRuns(runs: InlineRun[]): InlineRun[][] {
   return rows.sort((a, b) => a[0].top - b[0].top)
 }
 
+/**
+ * 基线偏移：行盒顶边到这一行基线的高度（CSS px）。
+ *
+ * 画布默认按 middle 对齐，而 middle 是字体 em 框的中线，不是汉字视觉上的重心 ——
+ * 行盒上下留白并不均分，于是同一行里中文、英文、行内代码的基线各走各的，
+ * 导出图看起来高低不齐。浏览器给的是基线，照抄它才和预览一致。
+ */
+function baselineOffset(el: HTMLElement): number | null {
+  if (typeof document === 'undefined' || !document.createRange) return null
+  const range = document.createRange()
+  range.selectNodeContents(el)
+  // jsdom 等环境没有 Range 的盒子 API，量不到就退回 middle 对齐
+  if (typeof range.getBoundingClientRect !== 'function' || typeof range.getClientRects !== 'function') return null
+  const box = range.getBoundingClientRect()
+  const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0 && r.height > 0)
+  if (!rects.length || box.height <= 0) return null
+  const probe = document.createElement('span')
+  probe.textContent = '中'
+  probe.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;display:inline-block'
+  el.appendChild(probe)
+  const probeRect = probe.getBoundingClientRect()
+  el.removeChild(probe)
+  const offset = probeRect.top - box.top
+  // 量不到（元素被移出文档）就退回 middle，别让整段跳位
+  return Number.isFinite(offset) && offset > 0 && offset < box.height ? offset / totalScale(el) : null
+}
+
 /** 行盒里的字体信息现场读，别隔着闭包传声明对象（部分环境拿不到值） */
 function styleOf(el: HTMLElement | null | undefined): CSSStyleDeclaration | null {
   return el ? window.getComputedStyle(el) : null
@@ -533,6 +617,10 @@ function paintRuns(ctx: CanvasRenderingContext2D, rows: InlineRun[][], scale: nu
       ctx.fillStyle = style.color
       ctx.textAlign = 'left'
       ctx.textBaseline = 'middle'
+      // 画布不吃 CSS 排版，text-transform 得自己折算：否则代码块右上角的语言标签
+      // 预览是大写、导出是原文
+      const upper = style.textTransform === 'uppercase'
+      const baseOffset = run.el ? baselineOffset(run.el) : null
 
       // 一段里排了多行：按它自己实测的行矩形逐行裁切绘制。
       // 断点稍有出入也不会糊到隔壁行，行距也对得上浏览器
@@ -545,7 +633,7 @@ function paintRuns(ctx: CanvasRenderingContext2D, rows: InlineRun[][], scale: nu
           // 多留 2px：行末的直角字形不会因为取整被切掉一竖
           ctx.rect(row.x * scale, row.top * scale, (row.width + 2) * scale, row.height * scale)
           ctx.clip()
-          ctx.fillText(line, row.x * scale, (row.top + row.height / 2) * scale)
+          ctx.fillText(upper ? line.toUpperCase() : line, row.x * scale, (row.top + row.height / 2) * scale)
           ctx.restore()
         })
         continue
@@ -560,11 +648,13 @@ function paintRuns(ctx: CanvasRenderingContext2D, rows: InlineRun[][], scale: nu
         const box = run.boxes?.[idx] ?? fallbackBoxes?.[idx]
         if (box) {
           // 内层已经按行盒裁切过了，这里别再来一次
-          ctx.fillText(line, box.x * scale, (box.top + box.height / 2) * scale)
+          const baseline = baseOffset != null ? box.top + baseOffset : box.top + box.height / 2
+          ctx.fillText(upper ? line.toUpperCase() : line, box.x * scale, baseline * scale)
           return
         }
-        const y = (top + height / 2 + (idx - (run.lines.length - 1) / 2) * lineStep) * scale
-        ctx.fillText(line, run.x * scale, y)
+        const lineTop = top + height / 2 + (idx - (run.lines.length - 1) / 2) * lineStep - lineStep / 2
+        const baseline = baseOffset != null ? lineTop + baseOffset : top + height / 2 + (idx - (run.lines.length - 1) / 2) * lineStep
+        ctx.fillText(upper ? line.toUpperCase() : line, run.x * scale, baseline * scale)
       })
     }
   }
@@ -576,7 +666,7 @@ function shouldPaintBackground(el: HTMLElement, cs: CSSStyleDeclaration): boolea
 }
 
 function paintBackground(ctx: CanvasRenderingContext2D, el: HTMLElement, cs: CSSStyleDeclaration, rect: DOMRect, rootRect: DOMRect, scale: number) {
-  const nb = norm(rect, rootRect)
+  const nb = norm(rect, rootRect, el)
   const x = nb.left * scale
   const y = nb.top * scale
   const w = nb.width * scale
@@ -609,10 +699,10 @@ function paintBackground(ctx: CanvasRenderingContext2D, el: HTMLElement, cs: CSS
   ctx.restore()
 }
 
-function paintBorder(ctx: CanvasRenderingContext2D, cs: CSSStyleDeclaration, rect: DOMRect, rootRect: DOMRect, scale: number) {
+function paintBorder(ctx: CanvasRenderingContext2D, el: HTMLElement, cs: CSSStyleDeclaration, rect: DOMRect, rootRect: DOMRect, scale: number) {
   const width = px(cs.borderTopWidth)
   if (!width || cs.borderTopStyle === 'none' || cs.borderTopColor === 'rgba(0, 0, 0, 0)') return
-  const nb = norm(rect, rootRect)
+  const nb = norm(rect, rootRect, el)
   const x = nb.left * scale
   const y = nb.top * scale
   const w = nb.width * scale
@@ -658,8 +748,8 @@ function paintText(ctx: CanvasRenderingContext2D, el: HTMLElement, cs: CSSStyleD
   // 只能拿这一块里最宽的那条行盒当基准。
   // 最宽的那条都填不满元素宽度时，说明这块是被断点拆碎的，只能按元素宽度重排
   // 元素能排字的宽度；量不到才用"这一块最宽的行盒 − 自己的内边距"来估
-  const boxWidth = collectWidth(el) / cssScale
-  const measured = maxRowWidth(el) / cssScale - px(cs.paddingLeft) - px(cs.paddingRight)
+  const boxWidth = collectWidth(el) / totalScale(el)
+  const measured = maxRowWidth(el) / totalScale(el) - px(cs.paddingLeft) - px(cs.paddingRight)
   blockRowWidth = boxWidth > 0 ? boxWidth : measured
   const runs: InlineRun[] = []
   const trustLayout = collectRuns(el, rootRect, runs)
@@ -673,7 +763,7 @@ function paintText(ctx: CanvasRenderingContext2D, el: HTMLElement, cs: CSSStyleD
   const fontSize = px(cs.fontSize) * scale
   if (fontSize < 1) return
 
-  const nb = norm(rect, rootRect)
+  const nb = norm(rect, rootRect, el)
   const paddingLeft = px(cs.paddingLeft)
   const paddingRight = px(cs.paddingRight)
   const contentW = Math.max(0, nb.width - paddingLeft - paddingRight)
@@ -684,6 +774,8 @@ function paintText(ctx: CanvasRenderingContext2D, el: HTMLElement, cs: CSSStyleD
   ctx.fillStyle = cs.color
   ctx.textAlign = (cs.textAlign as CanvasTextAlign) || 'left'
   ctx.textBaseline = 'middle'
+  // 画布不吃 CSS 排版，text-transform 得自己折算
+  const upper = cs.textTransform === 'uppercase'
 
   const lineHeight = px(cs.lineHeight) || px(cs.fontSize) * 1.5
   const lines = wrapText(ctx, text.replace(/\s+/g, ' ').trim(), contentW * scale, isEllipsis(el, cs))
@@ -693,7 +785,7 @@ function paintText(ctx: CanvasRenderingContext2D, el: HTMLElement, cs: CSSStyleD
   const alignX = ctx.textAlign === 'center' ? left + (contentW * scale) / 2 : ctx.textAlign === 'right' ? left + contentW * scale : left
 
   lines.forEach((line, idx) => {
-    ctx.fillText(line, alignX, nb.top * scale + offsetY + idx * lineHeight * scale)
+    ctx.fillText(upper ? line.toUpperCase() : line, alignX, nb.top * scale + offsetY + idx * lineHeight * scale)
   })
   ctx.restore()
 }
@@ -714,7 +806,7 @@ const pendingImages: Array<{ img: HTMLImageElement; draw: () => void }> = []
 function paintSvg(el: SVGSVGElement, rect: DOMRect, rootRect: DOMRect, scale: number) {
   const clone = el.cloneNode(true) as SVGSVGElement
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
-  const nb = norm(rect, rootRect)
+  const nb = norm(rect, rootRect, el)
   // 显式宽高，避免部分环境按 0x0 光栅化
   clone.setAttribute('width', String(Math.max(1, Math.round(nb.width))))
   clone.setAttribute('height', String(Math.max(1, Math.round(nb.height))))
@@ -736,6 +828,10 @@ function paintNode(ctx: CanvasRenderingContext2D, el: Element, rootRect: DOMRect
   const cs = window.getComputedStyle(html)
   if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return
 
+  // 元素自身的缩放影响它自己和后代的位置与尺寸，先记下来再往下画
+  const zoom = zoomValue(html, cs)
+  if (Number.isFinite(zoom) && zoom > 0 && zoom !== 1) zoomOf.set(html, zoom)
+
   const rect = html.getBoundingClientRect()
   if (rect.width === 0 || rect.height === 0) return
 
@@ -754,7 +850,7 @@ function paintNode(ctx: CanvasRenderingContext2D, el: Element, rootRect: DOMRect
     isLayout || Array.from(html.children).some((child) => !INLINE_TAGS.has(child.tagName?.toUpperCase()))
 
   ctx.save()
-  const nb = norm(rect, rootRect)
+  const nb = norm(rect, rootRect, html)
   const radius = px(cs.borderTopLeftRadius) * scale
   if (radius > 0) {
     ctx.beginPath()
@@ -762,7 +858,7 @@ function paintNode(ctx: CanvasRenderingContext2D, el: Element, rootRect: DOMRect
     ctx.clip()
   }
   if (shouldPaintBackground(html, cs)) paintBackground(ctx, html, cs, rect, rootRect, scale)
-  paintBorder(ctx, cs, rect, rootRect, scale)
+  paintBorder(ctx, html, cs, rect, rootRect, scale)
   if (!hasBlockChildren) paintText(ctx, html, cs, rect, rootRect, scale, rootCs)
   ctx.restore()
 

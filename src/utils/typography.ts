@@ -76,3 +76,16 @@ export function breakPoints(text: string): string {
 export function textParts(value: string): string[] {
   return value.split('\n')
 }
+
+/**
+ * 断点片段之间要插入的字符。
+ *
+ * 用零宽空格而不是 `<wbr>`：`<wbr>` 只给浏览器一个断点，片段本身比整行还宽时
+ * 浏览器仍会从中间硬拆；零宽空格是真实字符，浏览器会先在这里断。
+ */
+export const ZWSP = '\u200B'
+
+/** 断点片段：渲染时片段之间插零宽空格 */
+export function breakParts(text: string): string[] {
+  return text.split('\n')
+}
