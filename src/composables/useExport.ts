@@ -4,6 +4,7 @@ import type { ExportResult, ExportScale } from '@/types/export'
 import { renderElementToCanvas, canvasToBlob } from '@/utils/dom-to-image'
 import { buildFileName, downloadBlob } from '@/utils/filename'
 import { copyBlobToClipboard } from '@/utils/clipboard'
+import { withMeasurableLayout } from '@/utils/layout'
 
 export interface ExportTarget {
   /** 卡片根节点（固定 1:1 像素尺寸） */
@@ -29,11 +30,16 @@ export function useExport() {
   async function render(scale: ExportScale): Promise<ExportResult> {
     const t = target.value
     if (!t?.element) throw new Error('卡片尚未挂载')
-    await t.waitUntilReady?.()
     const { width, height } = t.style.size
-    // 导出图必须带透明通道：背景透明度调成 0 时要能叠到别的东西上。
-    // 渲染器的兜底底色默认刷白，那就是「导出一张白底图」而不是「一张透明底卡」。
-    const canvas = await renderElementToCanvas(t.element, { scale, width, height, background: 'transparent' })
+    // 手机端没选中「预览」Tab 时，卡片所在面板是 display:none，量什么都是 0，
+    // 直接画会得到一张空白图。先让它有布局，画完还原。
+    const canvas = await withMeasurableLayout(t.element, { width, height }, async () => {
+      // 等自适应量完，否则可能截到逐档试缩的中间态
+      await t.waitUntilReady?.()
+      // 导出图必须带透明通道：背景透明度调成 0 时要能叠到别的东西上。
+      // 渲染器的兜底底色默认刷白，那就是「导出一张白底图」而不是「一张透明底卡」。
+      return renderElementToCanvas(t.element!, { scale, width, height, background: 'transparent' })
+    })
     const blob = await canvasToBlob(canvas)
     return {
       blob,

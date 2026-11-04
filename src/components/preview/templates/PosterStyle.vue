@@ -10,8 +10,8 @@ const props = defineProps<{ card: CardData; style: CardStyle }>()
 const pad = () => Math.round(props.style.size.width * 0.066)
 
 const contentEl = ref<HTMLElement | null>(null)
-const { scale, waitForSettle } = useAutoFit(contentEl, () => [props.card, props.style])
-defineExpose({ waitForSettle })
+const { scale, refit, waitForSettle } = useAutoFit(contentEl, () => [props.card, props.style])
+defineExpose({ refit, waitForSettle })
 // 海报风是贴底大字版式，不入居中那一套
 </script>
 

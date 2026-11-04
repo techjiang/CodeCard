@@ -652,3 +652,94 @@ describe('导出渲染：装饰 SVG', () => {
     }
   })
 })
+
+describe('导出渲染：中文行末标点', () => {
+  /**
+   * 浏览器会把行末的中文标点「悬挂」到行盒之外：行盒宽度不含它，行首也看不到它。
+   * 切行时不模拟这一步，句号就会被挤到下一行，孤零零占一整行。
+   */
+  function withFont<T extends HTMLElement>(el: T): T {
+    el.style.setProperty('font-size', '20px')
+    el.style.setProperty('font-family', 'sans-serif')
+    return el
+  }
+
+  const realRange = Range.prototype.getClientRects
+
+  afterEach(() => {
+    Range.prototype.getClientRects = realRange
+  })
+
+  /** 让整段文字拿到固定的两行行盒 */
+  function fakeLines(rects: Array<[number, number, number, number]>, fullText: string) {
+    Range.prototype.getClientRects = function (this: Range) {
+      const text = this.toString()
+      if (!text.trim()) return [] as never
+      return (text === fullText ? rects : []).map(([x, y, w, h]) => ({
+        x,
+        y,
+        left: x,
+        top: y,
+        right: x + w,
+        bottom: y + h,
+        width: w,
+        height: h,
+      })) as never
+    } as never
+  }
+
+  test('句号跟着上一行走，不会单独占一行', async () => {
+    const text = '一二三四五六七八九十。'
+    const root = fakeRect(document.createElement('div'), 220, 400, 0, 0)
+    const p = withFont(fakeRect(document.createElement('p'), 220, 80, 0, 0))
+    Object.defineProperty(p, 'clientWidth', { value: 220, configurable: true })
+    p.textContent = text
+    root.appendChild(p)
+    document.body.appendChild(root)
+    // 浏览器排成两行：前十个字占 200px，句号悬挂在行盒外
+    fakeLines(
+      [
+        [0, 0, 200, 24],
+        [0, 30, 20, 24],
+      ],
+      text,
+    )
+    await renderElementToCanvas(root, { scale: 1, width: 220, height: 400 })
+    const drawn = texts().join('')
+    // 句号必须和正文在同一段里，而不是自己一段
+    expect(drawn).toContain('。')
+    expect(texts().every((line) => line.replace(/\s/g, '') !== '。')).toBe(true)
+  })
+})
+
+describe('导出渲染：可用宽度', () => {
+  test('块级宿主自己的内边距只扣一次', async () => {
+    const root = fakeRect(document.createElement('div'), 300, 400, 0, 0)
+    const p = styled(fakeRect(document.createElement('div'), 300, 80), {
+      fontSize: '20px',
+      paddingLeft: '20px',
+      paddingRight: '20px',
+    })
+    // clientWidth 在真实浏览器里已经扣掉内边距，但仍是「含内边距的内容盒 + 内边距」，
+    // 这里给 300 表示元素总宽就是 300
+    Object.defineProperty(p, 'clientWidth', { value: 300, configurable: true })
+    // 13 个字刚好卡在 260px（300 扣一次内边距）里；再扣一次只剩 220px，会被切成两行
+    p.textContent = '一二三四五六七八九十一二三'
+    root.appendChild(p)
+    document.body.appendChild(root)
+    await renderElementToCanvas(root, { scale: 1, width: 300, height: 400 })
+    expect(texts()).toEqual(['一二三四五六七八九十一二三'])
+  })
+
+  test('clientWidth 为 0 时退回实测盒子宽度', async () => {
+    const root = fakeRect(document.createElement('div'), 200, 400, 0, 0)
+    const p = styled(fakeRect(document.createElement('div'), 100, 80), { fontSize: '20px' })
+    Object.defineProperty(p, 'clientWidth', { value: 0, configurable: true })
+    p.textContent = '一二三四五六七八九十'
+    root.appendChild(p)
+    document.body.appendChild(root)
+    await renderElementToCanvas(root, { scale: 1, width: 200, height: 400 })
+    // 退回盒子宽度 100px → 每行 5 个字
+    expect(texts()).toEqual(['一二三四五', '六七八九十'])
+  })
+})

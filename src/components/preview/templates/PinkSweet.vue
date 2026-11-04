@@ -9,8 +9,8 @@ import Watermark from '../parts/Watermark.vue'
 const props = defineProps<{ card: CardData; style: CardStyle }>()
 
 const contentEl = ref<HTMLElement | null>(null)
-const { scale, balance, waitForSettle } = useAutoFit(contentEl, () => [props.card, props.style])
-defineExpose({ waitForSettle })
+const { scale, balance, refit, waitForSettle } = useAutoFit(contentEl, () => [props.card, props.style])
+defineExpose({ refit, waitForSettle })
 // 内容装得下时把 .cc-content 竖着居中；溢出时（balance = 1）交还给 flex 自己排
 // 居中要写在 .cc-content 上：它自己是 height:100% 的 flex 列，排在版心里不会动
 const fitStyle = computed(() => ({ justifyContent: balance.value <= 0.5 ? 'center' : 'flex-start' }))

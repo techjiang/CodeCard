@@ -187,6 +187,31 @@ export function useAutoFit(root: Ref<HTMLElement | null>, deps: () => unknown) {
     return settleBalance()
   }
 
+  /**
+   * 立刻重算一遍并等它收敛。
+   *
+   * 导出前用：卡片可能刚从 `display: none` 里被支起来（手机端停在别的 Tab 上），
+   * 之前的自适应是在零尺寸下算的，得按现在的真实盒子重来一次。
+   */
+  async function refit(): Promise<void> {
+    if (running) {
+      pending = true
+      await waitForSettle()
+      return
+    }
+    running = true
+    try {
+      await measure()
+      settled.value = true
+    } finally {
+      running = false
+      if (pending) {
+        pending = false
+        schedule()
+      }
+    }
+  }
+
   /** 等这一轮测量收敛：导出前要用，否则可能截到缩放的中间态 */
   async function waitForSettle(timeout = 1600): Promise<void> {
     const start = Date.now()
@@ -331,5 +356,5 @@ export function useAutoFit(root: Ref<HTMLElement | null>, deps: () => unknown) {
     observer?.disconnect()
   })
 
-  return { scale, settled, balance, measure, waitForSettle }
+  return { scale, settled, balance, measure, refit, waitForSettle }
 }
