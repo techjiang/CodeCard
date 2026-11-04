@@ -9,7 +9,12 @@ import { useAutoFit } from '@/composables/useAutoFit'
 const props = defineProps<{ card: CardData; style: CardStyle }>()
 
 const contentEl = ref<HTMLElement | null>(null)
-const { scale } = useAutoFit(contentEl, () => [props.card, props.style])
+const { scale, waitForSettle } = useAutoFit(contentEl, () => [props.card, props.style])
+defineExpose({ waitForSettle })
+/**
+ * 内容装得下时把版心竖着居中，别把半张卡空在下边。
+ * 装不下（balance 被标成 1 = 溢出）时交还给 flex 自己排，溢出方向由模板决定。
+ */
 const pad = () => Math.round(props.style.size.width * 0.068)
 const HAND_FONT = '"LXGW WenKai", "Kaiti SC", cursive'
 </script>
@@ -47,6 +52,10 @@ const HAND_FONT = '"LXGW WenKai", "Kaiti SC", cursive'
 }
 .hw {
   flex: 1 1 auto;
+  /* 版心的宽度必须由容器决定：min-width:auto 会让它被内容顶宽，
+     父级跟着撑开，量出来的「可用宽度」就成了错的，字号也就缩不下去 */
+  width: 100%;
+  min-width: 0;
   min-height: 0;
   width: 100%;
   display: flex;

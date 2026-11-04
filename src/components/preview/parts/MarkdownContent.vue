@@ -90,6 +90,9 @@ const strongColor = computed(() => (props.tone === 'dark' ? '#FFFFFF' : '#11131A
   flex-direction: column;
   gap: 0.62em;
   line-height: 1.8;
+  /* 正文按容器宽度排版：不写死会让长行把整条父链顶宽，自量的「可用宽度」跟着失真 */
+  min-width: 0;
+  max-width: 100%;
 }
 .md-h {
   margin: 0.2em 0 0;

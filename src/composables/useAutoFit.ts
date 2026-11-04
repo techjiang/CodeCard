@@ -47,6 +47,24 @@ function measureCtx(): CanvasRenderingContext2D | null {
   return sharedCtx
 }
 
+/**
+ * 卡片能给出多少高度（设计像素，减掉卡片自己的上下内边距）。
+ *
+ * 不能拿版心自己的 clientHeight 当上限 —— 它是 flex 项，被内容撑高之后
+ * 下一轮读到的还是那个撑大的值，长文于是永远判为「放得下」，只会越放越大。
+ */
+function courtHeight(root: HTMLElement): number {
+  let box = root.parentElement
+  while (box) {
+    const cs = getComputedStyle(box)
+    const bounded = cs.height !== 'auto' || cs.maxHeight !== 'none'
+    const inner = (parseFloat(cs.height) || box.clientHeight) - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0)
+    if (bounded && inner > 0) return inner
+    box = box.parentElement
+  }
+  return root.clientHeight
+}
+
 function clamp(v: number): number {
   return Math.max(MIN_SCALE, Math.min(MAX_GROW, Number(v.toFixed(2))))
 }
@@ -60,6 +78,13 @@ function clamp(v: number): number {
  */
 export function useAutoFit(root: Ref<HTMLElement | null>, deps: () => unknown) {
   const scale = ref(1)
+  /**
+   * 内容在版心里的位置，0 ~ 1：
+   * - 内容放得下时 = 上留白占「总余量」的比例，0.5 就是上下均分
+   * - 内容溢出时 = 溢出量占版心的比例，模板据此往某个方向倾倒
+   * 模板只在内容放得下时拿它居中。
+   */
+  const balance = ref(0.5)
   /** 首次测量是否已经完成，导出要等它，否则可能截到缩放的中间态 */
   const settled = ref(false)
   let running = false
@@ -95,8 +120,7 @@ export function useAutoFit(root: Ref<HTMLElement | null>, deps: () => unknown) {
     scale.value = 1
     await nextTick()
 
-    const cs = getComputedStyle(el)
-    const target = el.clientHeight - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0)
+    const target = visibleCourt(el)
     const base = naturalTotal(el)
     if (base > target + 1) {
       // 高度随字号单调增长，按比例缩通常一两次就到位。
@@ -106,14 +130,14 @@ export function useAutoFit(root: Ref<HTMLElement | null>, deps: () => unknown) {
       for (let i = 0; i <= MAX_STEPS * 4; i++) {
         scale.value = g
         await nextTick()
-        if (fits(el, target)) return
-        if (g <= MIN_SCALE) return
+        if (fits(el, target)) return settleBalance()
+        if (g <= MIN_SCALE) return settleBalance()
         // 差得多就直接按真实高度比跳过去，别一档一档挪
         const cur = naturalTotal(el)
         const ratio = cur > target * 1.15 ? Math.max(0.7, Math.min(0.97, target / cur)) : 1
         g = Math.max(MIN_SCALE, Math.round((g * ratio - 0.02) * 100) / 100)
       }
-      return
+      return settleBalance()
     }
 
     // 内容不满一屏：先按高度和行宽估一个放大上限，再从这一档往下试，
@@ -125,11 +149,58 @@ export function useAutoFit(root: Ref<HTMLElement | null>, deps: () => unknown) {
       scale.value = g
       await nextTick()
       if (!fits(el, target)) continue
-      if (!hasBadBreak(el)) return
+      if (!hasBadBreak(el)) {
+        await settleBalance()
+        return
+      }
       // 记录一个可用但略有瑕疵的档位，实在挑不到时用它，别一直停在原尺寸
       if (safe === 1) safe = g
     }
     scale.value = safe
+    await nextTick()
+    return settleBalance()
+  }
+
+  /** 等这一轮测量收敛：导出前要用，否则可能截到缩放的中间态 */
+  async function waitForSettle(timeout = 1600): Promise<void> {
+    const start = Date.now()
+    while (Date.now() - start < timeout) {
+      if (!running && !pending && !timer) return
+      await new Promise((resolve) => setTimeout(resolve, 40))
+    }
+  }
+
+  /**
+   * 版心现在实际给得出多少高度。
+   * 预览区把卡片缩小时，版心的布局高度不变，但 flex 收缩会让它低于「卡片内高」——
+   * 之前按 clientHeight 量到的其实是缩小后的一小截，短内容照样被当成「放不下」。
+   */
+  function visibleCourt(el: HTMLElement): number {
+    const sizes = cardSizes(el)
+    // 版心连卡片内高都没占到，说明是预览缩放把它压小了，按卡片内高走
+    return el.clientHeight >= sizes.inner * 0.6 ? Math.min(el.clientHeight, sizes.inner) : sizes.inner
+  }
+
+  /** 卡片根节点的尺寸（设计像素）与它的内高 */
+  function cardSizes(el: HTMLElement) {
+    const card = el.parentElement
+    if (!card) return { inner: 0, width: 0, height: 0 }
+    const cs = getComputedStyle(card)
+    const height = parseFloat(cs.height) || card.offsetHeight
+    const inner = height - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0)
+    return { inner: inner > 0 ? inner : height, width: parseFloat(cs.width) || card.offsetWidth, height }
+  }
+
+  /** 量结束后告诉外面内容相对版心占了多高，模板据此决定垂直对齐 */
+  async function settleBalance() {
+    const el = root.value
+    if (!el) return
+    const court = visibleCourt(el)
+    if (court <= 0) return
+    // 内容比版心还高时对齐不了，只能交给模板往某个方向倾倒
+    const used = naturalTotal(el) / scale.value
+    const ratio = used / court
+    balance.value = ratio > 1 ? Math.max(0, Math.min(1, ratio - 1)) : Math.max(0, Math.min(1, (1 - ratio) / 2))
     await nextTick()
   }
 
@@ -139,8 +210,9 @@ export function useAutoFit(root: Ref<HTMLElement | null>, deps: () => unknown) {
     if (!content) return MAX_GROW
     const fontSize = parseFloat(getComputedStyle(content).fontSize) || 0
     if (fontSize <= 0) return MAX_GROW
-    // 此刻 scale 还是 1，量到的是基础字号；放大后字号会等比变大
-    const width = content.clientWidth
+    // 此刻 scale 还是 1，量到的是基础字号；放大后字号会等比变大。
+    // 宽度取卡片的设计宽度：预览缩小后 clientWidth 也跟着小，会把天花板放得过宽
+    const width = cardSizes(el).width || content.clientWidth
     return width / (fontSize * MIN_CHARS_PER_LINE)
   }
 
@@ -233,5 +305,5 @@ export function useAutoFit(root: Ref<HTMLElement | null>, deps: () => unknown) {
     observer?.disconnect()
   })
 
-  return { scale, settled, measure }
+  return { scale, settled, balance, measure, waitForSettle }
 }

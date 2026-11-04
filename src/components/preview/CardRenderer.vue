@@ -22,6 +22,8 @@ const props = defineProps<{
   showChrome?: boolean
   /** 内容自适应倍率（1 = 原尺寸） */
   fitScale?: number
+  /** 模板追加到 .cc-content 上的样式（垂直对齐等） */
+  contentStyle?: Record<string, string>
 }>()
 
 const fit = computed(() => props.fitScale ?? 1)
@@ -46,7 +48,7 @@ const footerItems = computed(() => {
 </script>
 
 <template>
-  <div class="cc-content" :style="{ fontFamily: FONT_STACK[style.fontFamily], color: textColor }">
+  <div class="cc-content" :style="{ fontFamily: FONT_STACK[style.fontFamily], color: textColor, ...contentStyle }">
     <header v-if="showTitle" class="cc-header">
       <h1 class="cc-title" :style="{ fontSize: `${Math.round(fontSize * 1.62)}px` }">{{ card.title }}</h1>
       <p v-if="showSubtitle" class="cc-subtitle" :style="{ fontSize: `${Math.round(fontSize * 0.72)}px`, color: mutedColor }">
@@ -110,7 +112,11 @@ const footerItems = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 34px;
+  /* 只能撑到容器宽度：flex 子项的 min-width 默认是 auto，写 100% 反而会被自己的内容顶宽，
+     父级跟着被撑开，量出来的「可用宽度」就成了错的 */
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   height: 100%;
   line-height: 1.8;
 }

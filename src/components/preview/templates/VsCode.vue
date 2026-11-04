@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import type { CardData, CardStyle } from '@/types/card'
 import CardShell from '../parts/CardShell.vue'
 import CardRenderer from '../CardRenderer.vue'
@@ -9,7 +9,11 @@ import Watermark from '../parts/Watermark.vue'
 const props = defineProps<{ card: CardData; style: CardStyle }>()
 
 const contentEl = ref<HTMLElement | null>(null)
-const { scale } = useAutoFit(contentEl, () => [props.card, props.style])
+const { scale, balance, waitForSettle } = useAutoFit(contentEl, () => [props.card, props.style])
+defineExpose({ waitForSettle })
+// 内容装得下时把 .cc-content 竖着居中；溢出时（balance = 1）交还给 flex 自己排
+// 居中要写在 .cc-content 上：它自己是 height:100% 的 flex 列，排在版心里不会动
+const fitStyle = computed(() => ({ justifyContent: balance.value <= 0.5 ? 'center' : 'flex-start' }))
 const pad = () => Math.round(props.style.size.width * 0.05)
 const tabName = () => props.card.filename || (props.card.language ? `untitled.${props.card.language}` : 'untitled')
 </script>
@@ -44,7 +48,7 @@ const tabName = () => props.card.filename || (props.card.language ? `untitled.${
     </template>
 
     <div ref="contentEl" class="cc-fit">
-      <CardRenderer :card="card" :style="style" tone="dark" :fit-scale="scale" />
+      <CardRenderer :card="card" :style="style" tone="dark" :fit-scale="scale" :content-style="fitStyle" />
     </div>
 
     <template #overlay>
@@ -98,6 +102,10 @@ const tabName = () => props.card.filename || (props.card.language ? `untitled.${
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
+  /* 版心的宽度必须由容器决定：min-width:auto 会让它被内容顶宽，
+     父级跟着撑开，量出来的「可用宽度」就成了错的，字号也就缩不下去 */
+  width: 100%;
+  min-width: 0;
   min-height: 0;
 }
 </style>
