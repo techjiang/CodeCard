@@ -38,11 +38,22 @@ export async function closeBrowser() {
   browser = null
 }
 
-export async function openApp(viewport = { width: 1440, height: 900 }): Promise<Page> {
+/**
+ * 打开应用。
+ *
+ * 窄屏（<=900px）默认停在「内容」Tab，卡片所在面板是 display:none —— 元素在 DOM 里
+ * 但不可见，所以默认只等它挂上（attached）。要真实可见的用例自己开 `visible`。
+ */
+export async function openApp(
+  viewport = { width: 1440, height: 900 },
+  options: { visible?: boolean } = {},
+): Promise<Page> {
   const b = await launch()
   const page = await b.newPage({ viewport, deviceScaleFactor: 1 })
   await page.goto(APP_URL, { waitUntil: 'networkidle' })
-  await page.waitForSelector('[data-card-export] [data-card-root]')
+  await page.waitForSelector('[data-card-export] [data-card-root]', {
+    state: options.visible ? 'visible' : 'attached',
+  })
   return page
 }
 
