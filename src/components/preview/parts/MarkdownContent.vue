@@ -1,17 +1,32 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { parseMarkdown } from '@/utils/markdown'
-import { breakPoints, textParts } from '@/utils/typography'
+import { ZWSP, breakParts, breakPoints } from '@/utils/typography'
 
 const props = defineProps<{ content: string; tone: 'dark' | 'light' | 'accent'; fontSize: number }>()
 
 const blocks = computed(() => parseMarkdown(props.content ?? ''))
-/** 零宽空格：断点用字符而不是 <wbr>，片段超宽时不会被从中间硬拆 */
-const ZWSP = '\u200B'
-
 /** 行内代码里的长标识符同样要能在语义边界换行 */
 function codeParts(value: string): string[] {
-  return textParts(breakPoints(value))
+  return breakParts(breakPoints(value))
+}
+
+/**
+ * 把断点片段拼成一整串，断点处插零宽空格。
+ *
+ * 不写成模板里的逐个插值：那样每个片段都会产生独立的文本节点，
+ * 中间还夹着一堆空节点，导出时逐段量行盒既慢又容易错位。
+ */
+function joinWithZwsp(parts: string[]): string {
+  return parts.join(ZWSP)
+}
+
+function breakText(value: string): string {
+  return joinWithZwsp(breakParts(value))
+}
+
+function codeText(value: string): string {
+  return joinWithZwsp(codeParts(value))
 }
 
 const strongColor = computed(() => (props.tone === 'dark' ? '#FFFFFF' : '#11131A'))
@@ -24,59 +39,14 @@ const strongColor = computed(() => (props.tone === 'dark' ? '#FFFFFF' : '#11131A
         v-if="block.type === 'heading'"
         class="md-h"
         :style="{ fontSize: `${Math.round(fontSize * (block.level <= 2 ? 1.12 : 1))}px` }"
-      >
-        <template v-for="(node, ni) in block.inlines" :key="ni">
-          <template v-if="node.type === 'text'">
-            <template v-for="(part, pi) in textParts(node.value)" :key="pi">
-              <wbr v-if="pi" />{{ part }}
-            </template>
-          </template>
-          <template v-else>{{ node.value }}</template>
-        </template>
-      </h2>
+      ><template v-for="(node, ni) in block.inlines" :key="ni"><template v-if="node.type === 'text'">{{ breakText(node.value) }}</template><template v-else>{{ node.value }}</template></template></h2>
       <p v-else-if="block.type === 'paragraph'" class="md-p">
-        <template v-for="(node, ni) in block.inlines" :key="ni">
-          <code v-if="node.type === 'code'" class="md-code">
-            <template v-for="(part, pi) in codeParts(node.value)" :key="pi">{{ pi ? ZWSP : '' }}{{ part }}</template>
-          </code>
-          <strong v-else-if="node.type === 'strong'" :style="{ color: strongColor }">{{ node.value }}</strong>
-          <em v-else-if="node.type === 'em'">{{ node.value }}</em>
-          <span v-else-if="node.type === 'link'" class="md-link">{{ node.value }}</span>
-          <template v-else-if="node.type === 'text'">
-            <template v-for="(part, pi) in textParts(node.value)" :key="pi">
-              <wbr v-if="pi" />{{ part }}
-            </template>
-          </template>
-        </template>
+        <template v-for="(node, ni) in block.inlines" :key="ni"><code v-if="node.type === 'code'" class="md-code">{{ codeText(node.value) }}</code><strong v-else-if="node.type === 'strong'" :style="{ color: strongColor }">{{ node.value }}</strong><em v-else-if="node.type === 'em'">{{ node.value }}</em><span v-else-if="node.type === 'link'" class="md-link">{{ node.value }}</span><template v-else-if="node.type === 'text'">{{ breakText(node.value) }}</template></template>
       </p>
       <ul v-else-if="block.type === 'list'" class="md-list" :class="{ 'md-list--ordered': block.ordered }">
-        <li v-for="(item, ii) in block.items" :key="ii">
-          <span class="md-marker">{{ block.ordered ? `${ii + 1}.` : '•' }}</span>
-          <span class="md-item">
-            <template v-for="(node, ni) in item" :key="ni">
-              <code v-if="node.type === 'code'" class="md-code">
-                <template v-for="(part, pi) in codeParts(node.value)" :key="pi">{{ pi ? ZWSP : '' }}{{ part }}</template>
-              </code>
-              <strong v-else-if="node.type === 'strong'" :style="{ color: strongColor }">{{ node.value }}</strong>
-              <template v-else-if="node.type === 'text'">
-                <template v-for="(part, pi) in textParts(node.value)" :key="pi">
-                  <wbr v-if="pi" />{{ part }}
-                </template>
-              </template>
-              <template v-else>{{ node.value }}</template>
-            </template>
-          </span>
-        </li>
+        <li v-for="(item, ii) in block.items" :key="ii"><span class="md-marker">{{ block.ordered ? `${ii + 1}.` : '•' }}</span><span class="md-item"><template v-for="(node, ni) in item" :key="ni"><code v-if="node.type === 'code'" class="md-code">{{ codeText(node.value) }}</code><strong v-else-if="node.type === 'strong'" :style="{ color: strongColor }">{{ node.value }}</strong><template v-else-if="node.type === 'text'">{{ breakText(node.value) }}</template><template v-else>{{ node.value }}</template></template></span></li>
       </ul>
-      <blockquote v-else-if="block.type === 'quote'" class="md-quote">
-        <template v-for="(node, ni) in block.inlines" :key="ni">
-          <template v-if="node.type === 'text'">
-            <template v-for="(part, pi) in textParts(node.value)" :key="pi">
-              <wbr v-if="pi" />{{ part }}
-            </template>
-          </template>
-          <template v-else>{{ node.value }}</template>
-        </template>
+      <blockquote v-else-if="block.type === 'quote'" class="md-quote"><template v-for="(node, ni) in block.inlines" :key="ni"><template v-if="node.type === 'text'">{{ breakText(node.value) }}</template><template v-else>{{ node.value }}</template></template>
       </blockquote>
       <pre v-else-if="block.type === 'code'" class="md-pre"><code>{{ block.value }}</code></pre>
       <hr v-else-if="block.type === 'divider'" class="md-hr" />
@@ -108,7 +78,7 @@ const strongColor = computed(() => (props.tone === 'dark' ? '#FFFFFF' : '#11131A
   background: rgba(127, 127, 127, 0.16);
   font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
   font-size: 0.88em;
-  /* 行内元素默认会吃掉模板里的换行，<wbr> 才拿得到断点 */
+  /* 零宽空格是真实字符，行内代码里的断点和正文一致，不会被行尾规则吃掉 */
   white-space: pre-wrap;
 }
 .md-link {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { breakPoints, normalizePunctuation, pangu, panguSegments, spaceCJK, textParts } from '@/utils/typography'
+import { ZWSP, breakParts, breakPoints, normalizePunctuation, pangu, panguSegments, spaceCJK, textParts } from '@/utils/typography'
 
 describe('Chinese Typography', () => {
   test('中英文之间自动加空格', () => {
@@ -58,5 +58,12 @@ describe('Chinese Typography', () => {
   test('断行点不破坏短标识符', () => {
     expect(textParts(breakPoints('a.b'))).toEqual(['a.', 'b'])
     expect(textParts(breakPoints('普通文本'))).toEqual(['普通文本'])
+  })
+
+  test('断点用零宽空格，片段比整行宽时浏览器也会先在这里断', () => {
+    expect(breakParts(breakPoints('Object.defineProperty'))).toEqual(['Object.', 'define', 'Property'])
+    // 零宽空格是不可见字符，但必须是真实字符（<wbr> 兜不住超宽片段）
+    expect(ZWSP).toBe('\u200B')
+    expect(ZWSP).toHaveLength(1)
   })
 })

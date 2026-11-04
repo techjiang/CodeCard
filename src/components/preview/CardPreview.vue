@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, ref, shallowRef, watch, type ComponentPublicInstance } from 'vue'
+import { computed, defineAsyncComponent, nextTick, ref, shallowRef, watch, type ComponentPublicInstance } from 'vue'
 import type { CardData, CardStyle } from '@/types/card'
 import { findTemplate } from '@/utils/templates'
 
@@ -53,14 +53,20 @@ const exportMeta = computed(() =>
   JSON.stringify({ width: props.style.size.width, height: props.style.size.height }),
 )
 
+/** 预览区留给卡片的边距：左右各 32、底部给尺寸标注留 90，和 .preview-host 对齐 */
+const PREVIEW_PAD_X = 64
+const PREVIEW_PAD_Y = 90
+
 function measure() {
   const box = container.value
   if (!box) return
-  const available = box.clientWidth - 64
-  const availableH = box.clientHeight - 60 - 30
+  const available = box.clientWidth - PREVIEW_PAD_X
+  const availableH = box.clientHeight - PREVIEW_PAD_Y
   if (available <= 0 || availableH <= 0) return
-  const scale = Math.min(available / props.style.size.width, availableH / props.style.size.height, 1)
-  autoScale.value = Math.max(0.12, Number(scale.toFixed(4)))
+  const design = props.style.size
+  const fitted = Math.min(available / design.width, availableH / design.height)
+  // 正好卡在 1 附近时保持原尺寸：1.0001 倍的缩放只会让文字被重采样变糊
+  autoScale.value = fitted >= 1 ? 1 : Math.max(0.12, Number(fitted.toFixed(4)))
 }
 
 let observer: ResizeObserver | null = null
@@ -78,7 +84,14 @@ function setupObserver(el: Element | ComponentPublicInstance | null) {
   setTimeout(measure, 120)
 }
 
-watch(() => [props.style.size.width, props.style.size.height], () => measure())
+watch(
+  () => [props.style.size.width, props.style.size.height],
+  async () => {
+    // 先让 DOM 换成新尺寸再量，否则量到的还是上一张卡片撑开的容器
+    await nextTick()
+    measure()
+  },
+)
 
 watch(cardEl, (el) => emit('ready', el))
 

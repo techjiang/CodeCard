@@ -323,6 +323,46 @@ describe('导出渲染：文本', () => {
     expect(out.length).toBeLessThan(9)
   })
 
+  test('text-transform: uppercase 折算到画布', async () => {
+    const root = fakeRect(document.createElement('div'), 200, 200)
+    // 用 div 而不是 span：SPAN 在导出器里一律按行内处理，走的是另一条绘制路径
+    const label = styled(fakeRect(document.createElement('div'), 200, 40), {
+      fontSize: '20px',
+      textTransform: 'uppercase',
+      display: 'block',
+    })
+    label.textContent = 'ts'
+    root.appendChild(label)
+    document.body.appendChild(root)
+    await renderElementToCanvas(root, { scale: 1, width: 200, height: 200 })
+    // 画布不吃 CSS 排版，不折算的话预览是大写、导出是原文
+    expect(texts()).toContain('TS')
+  })
+
+  test('祖先带 zoom 时按 zoom 折算尺寸', async () => {
+    const root = fakeRect(document.createElement('div'), 200, 200)
+    // zoom 2 的容器：浏览器量出来是 200×200，折回设计尺寸是 100×100
+    const zoomed = styled(fakeRect(document.createElement('div'), 100, 100), {
+      '--cc-fit': '2',
+      display: 'block',
+      backgroundColor: 'rgb(255, 255, 255)',
+      ...ROUND,
+    })
+    const p = styled(fakeRect(document.createElement('p'), 100, 40), { fontSize: '20px', display: 'block' })
+    p.textContent = '放大'
+    zoomed.appendChild(p)
+    root.appendChild(zoomed)
+    document.body.appendChild(root)
+    await renderElementToCanvas(root, { scale: 1, width: 200, height: 200 })
+
+    // 圆角路径首段从 (radius,0) 起、收到 (50,50)：宽 100 折回设计尺寸后半径 8 的位置就在 50。
+    // 不折算的话整块会按 200 宽画，直接撑出卡片
+    const arcs = callsOf('arcTo')
+    expect(arcs.length).toBeGreaterThan(0)
+    expect(Number(arcs[0][3])).toBeCloseTo(50, 5)
+    expect(texts()).toContain('放大')
+  })
+
   test('空文本不绘制', async () => {
     const root = fakeRect(document.createElement('div'), 200, 400)
     const p = styled(fakeRect(document.createElement('div'), 200, 40), { fontSize: '20px' })
