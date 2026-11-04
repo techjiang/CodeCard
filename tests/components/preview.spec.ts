@@ -74,6 +74,18 @@ describe('预览容器', () => {
     await vi.waitFor(() => expect(wrapper.text()).toContain('Vue 3 响应式原理'))
   })
 
+  test('模板异步加载完仍会重新发出 ready（导出目标不能一直是空）', async () => {
+    stubResizeObserver()
+    const wrapper = mount(CardPreview, { props: { card: { ...DEFAULT_CARD }, style: { ...DEFAULT_STYLE } } })
+    await vi.waitFor(() => expect(wrapper.find('[data-card-root]').exists()).toBe(true))
+    // 模板晚一拍才挂上来时也要再通知一次，否则外层注册的导出目标会一直是 null。
+    // 这里只保证「通知的那份 DOM 里确实有卡片根节点」——它是用来导出的那棵树
+    const emitted = wrapper.emitted('ready')!
+    const last = emitted[emitted.length - 1][0] as HTMLElement | null
+    expect(last).toBeInstanceOf(HTMLElement)
+    expect(last!.querySelector('[data-card-root]')).not.toBeNull()
+  })
+
   test('切换尺寸后重新测量', async () => {
     const instances = stubResizeObserver()
     const wrapper = mount(CardPreview, { props: { card: { ...DEFAULT_CARD }, style: { ...DEFAULT_STYLE } } })

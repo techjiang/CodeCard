@@ -665,7 +665,14 @@ function shouldPaintBackground(el: HTMLElement, cs: CSSStyleDeclaration): boolea
   return (cs.backgroundImage && cs.backgroundImage !== 'none') || (cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent')
 }
 
-function paintBackground(ctx: CanvasRenderingContext2D, el: HTMLElement, cs: CSSStyleDeclaration, rect: DOMRect, rootRect: DOMRect, scale: number) {
+function paintBackground(
+  ctx: CanvasRenderingContext2D,
+  el: HTMLElement,
+  cs: CSSStyleDeclaration,
+  rect: DOMRect,
+  rootRect: DOMRect,
+  scale: number,
+) {
   const nb = norm(rect, rootRect, el)
   const x = nb.left * scale
   const y = nb.top * scale
@@ -699,9 +706,21 @@ function paintBackground(ctx: CanvasRenderingContext2D, el: HTMLElement, cs: CSS
   ctx.restore()
 }
 
-function paintBorder(ctx: CanvasRenderingContext2D, el: HTMLElement, cs: CSSStyleDeclaration, rect: DOMRect, rootRect: DOMRect, scale: number) {
+function hasVisibleBorder(cs: CSSStyleDeclaration): boolean {
   const width = px(cs.borderTopWidth)
-  if (!width || cs.borderTopStyle === 'none' || cs.borderTopColor === 'rgba(0, 0, 0, 0)') return
+  return !!width && cs.borderTopStyle !== 'none' && cs.borderTopColor !== 'rgba(0, 0, 0, 0)'
+}
+
+function paintBorder(
+  ctx: CanvasRenderingContext2D,
+  el: HTMLElement,
+  cs: CSSStyleDeclaration,
+  rect: DOMRect,
+  rootRect: DOMRect,
+  scale: number,
+) {
+  const width = px(cs.borderTopWidth)
+  if (!hasVisibleBorder(cs)) return
   const nb = norm(rect, rootRect, el)
   const x = nb.left * scale
   const y = nb.top * scale
@@ -798,6 +817,12 @@ interface PendingSvg {
   y: number
   w: number
   h: number
+  /**
+   * 装饰自己的圆角半径（CSS px）。
+   * SVG 光栅化出来是「一整个矩形图层」，边缘那一两个像素的抗锯齿噪点会把外面的圆角啃掉，
+   * 所以落笔时要按装饰自己的圆角再裁一次。
+   */
+  radius: number
 }
 
 const pendingSvgs: PendingSvg[] = []
@@ -815,12 +840,40 @@ function paintSvg(el: SVGSVGElement, rect: DOMRect, rootRect: DOMRect, scale: nu
   const img = new Image()
   img.decoding = 'sync'
   img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(data)}`
-  pendingSvgs.push({ img, x: nb.left * scale, y: nb.top * scale, w: nb.width * scale, h: nb.height * scale })
+  // 光栅化时半径是整数近似，圆角边缘会残留一圈半透明的直角像素。
+  // 多裁 1px 盖住它：24px 圆角少 1px 看不出来，边上那一圈噪点却很扎眼
+  const radius = clipRadiusOf(el, rect) + 1
+  pendingSvgs.push({ img, x: nb.left * scale, y: nb.top * scale, w: nb.width * scale, h: nb.height * scale, radius })
+}
+
+/**
+ * 装饰实际被哪个圆角裁着。
+ *
+ * SVG 装饰自己是直角，圆角在外壳上；但它光栅化出来是「一整个矩形图层」，
+ * 边缘一两个像素的抗锯齿噪点会把外壳的圆角啃成方角。
+ * 所以落笔时按包含它的那层祖先的圆角再裁一次 —— 只认跟它几乎同框、带圆角、且溢出被隐藏的祖先。
+ */
+function clipRadiusOf(el: Element, rect: DOMRect): number {
+  let node = el.parentElement
+  while (node) {
+    const cs = window.getComputedStyle(node)
+    const own = px(cs.borderTopLeftRadius)
+    const box = node.getBoundingClientRect()
+    // 只认跟装饰几乎同框的那层：装饰自己铺满谁的盒子，就跟着谁的圆角走
+    const sameBox =
+      Math.abs(box.left - rect.left) < 0.5 &&
+      Math.abs(box.top - rect.top) < 0.5 &&
+      Math.abs(box.width - rect.width) < 0.5 &&
+      Math.abs(box.height - rect.height) < 0.5
+    if (own > 0 && sameBox) return own
+    node = node.parentElement
+  }
+  return 0
 }
 
 // ---------- 节点递归 ----------
 
-function paintNode(ctx: CanvasRenderingContext2D, el: Element, rootRect: DOMRect, rootCs: CSSStyleDeclaration, scale: number) {
+function paintNode(ctx: CanvasRenderingContext2D, el: Element, rootRect: DOMRect, rootCs: CSSStyleDeclaration, scale: number): void {
   const html = el as HTMLElement
   const tag = html.tagName?.toUpperCase()
   if (SKIP_TAGS.has(tag)) return
@@ -850,21 +903,27 @@ function paintNode(ctx: CanvasRenderingContext2D, el: Element, rootRect: DOMRect
     isLayout || Array.from(html.children).some((child) => !INLINE_TAGS.has(child.tagName?.toUpperCase()))
 
   ctx.save()
-  const nb = norm(rect, rootRect, html)
-  const radius = px(cs.borderTopLeftRadius) * scale
-  if (radius > 0) {
-    ctx.beginPath()
-    roundRect(ctx, nb.left * scale, nb.top * scale, nb.width * scale, nb.height * scale, radius)
-    ctx.clip()
-  }
-  if (shouldPaintBackground(html, cs)) paintBackground(ctx, html, cs, rect, rootRect, scale)
-  paintBorder(ctx, html, cs, rect, rootRect, scale)
-  if (!hasBlockChildren) paintText(ctx, html, cs, rect, rootRect, scale, rootCs)
-  ctx.restore()
-
+  // 只认自己的 opacity。祖先那份要是也乘下来，正文会跟着背景一起淡掉，
+  // 而预览里正文始终是实的（「背景透明度」调的本来就只是底）
+  const selfOpacity = cs.opacity === '' ? 1 : Number(cs.opacity)
+  ctx.globalAlpha = Math.max(0, Math.min(1, selfOpacity))
+  const bg = shouldPaintBackground(html, cs)
+  const border = hasVisibleBorder(cs)
   if (hasBlockChildren) {
+    // 有块级子节点：圆角只约束这一层自己的背景和描边（paintBackground 里各自裁剪）。
+    // 正文得按未裁剪的区域排 —— 浏览器不会因为 overflow:hidden 就换行。
+    // 装饰的溢出交给它自己的圆角处理，见 paintSvg 里的 radius。
+    if (bg) paintBackground(ctx, html, cs, rect, rootRect, scale)
+    if (border) paintBorder(ctx, html, cs, rect, rootRect, scale)
     for (const child of Array.from(html.children)) paintNode(ctx, child, rootRect, rootCs, scale)
+    ctx.restore()
+    return
   }
+
+  if (bg) paintBackground(ctx, html, cs, rect, rootRect, scale)
+  if (border) paintBorder(ctx, html, cs, rect, rootRect, scale)
+  paintText(ctx, html, cs, rect, rootRect, scale, rootCs)
+  ctx.restore()
 }
 
 // ---------- 入口 ----------
@@ -899,6 +958,11 @@ export async function renderElementToCanvas(root: HTMLElement, options: RenderOp
             try {
               ctx.save()
               ctx.globalCompositeOperation = 'source-over'
+              if (item.radius > 0) {
+                ctx.beginPath()
+                roundRect(ctx, item.x, item.y, item.w, item.h, item.radius * scale)
+                ctx.clip()
+              }
               ctx.drawImage(item.img, item.x, item.y, item.w, item.h)
               ctx.restore()
             } catch {

@@ -1,5 +1,15 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, ref, shallowRef, watch, type ComponentPublicInstance } from 'vue'
+import {
+  computed,
+  defineAsyncComponent,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  shallowRef,
+  watch,
+  type ComponentPublicInstance,
+} from 'vue'
 import type { CardData, CardStyle } from '@/types/card'
 import { findTemplate } from '@/utils/templates'
 
@@ -14,6 +24,7 @@ const emit = defineEmits<{ ready: [el: HTMLElement | null] }>()
 
 const container = ref<HTMLElement | null>(null)
 const cardEl = ref<HTMLElement | null>(null)
+const mounted = ref(false)
 const autoScale = ref(1)
 
 /** 模板按需加载，缓存已加载组件避免闪烁 */
@@ -71,9 +82,19 @@ function measure() {
 
 let observer: ResizeObserver | null = null
 
+function bindContainer(el: Element | ComponentPublicInstance | null) {
+  container.value = el instanceof HTMLElement ? el : null
+}
+
+/** 绑定容器并挂上尺寸监听。用函数 ref + onMounted 双保险：
+ *  函数 ref 在 v-if 隐藏/显示时可能不触发，光靠它可能一辈子拿不到容器 */
+function bindHost(el: Element | ComponentPublicInstance | null) {
+  bindContainer(el)
+  if (el instanceof HTMLElement) setupObserver(el)
+}
+
 function setupObserver(el: Element | ComponentPublicInstance | null) {
   const host = el instanceof HTMLElement ? el : null
-  container.value = host
   if (typeof ResizeObserver === 'undefined' || !host) return
   observer?.disconnect()
   observer = new ResizeObserver(measure)
@@ -84,6 +105,18 @@ function setupObserver(el: Element | ComponentPublicInstance | null) {
   setTimeout(measure, 120)
 }
 
+// 容器在挂载那一刻可能还没有尺寸（隐藏面板、懒加载、布局未稳），
+// 之后又不会再有 resize 通知，所以要等挂载后补测几次
+onMounted(() => {
+  mounted.value = true
+  // 移动端切 Tab 才显示预览，容器此时才第一次有尺寸
+  if (container.value) setupObserver(container.value)
+  measure()
+  requestAnimationFrame(measure)
+  setTimeout(measure, 120)
+  setTimeout(measure, 400)
+})
+
 watch(
   () => [props.style.size.width, props.style.size.height],
   async () => {
@@ -93,7 +126,16 @@ watch(
   },
 )
 
-watch(cardEl, (el) => emit('ready', el))
+// 卡片根节点在外层挂载时可能还没渲染出来，挂载后补发一次 ready，否则导出目标一直是空的
+watch(
+  [cardEl, mounted],
+  ([el, isMounted]) => {
+    if (isMounted) emit('ready', el)
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => observer?.disconnect())
 
 /**
  * 模板里的自适应还在逐档试缩时不导出，免得截到中间态。
@@ -109,7 +151,7 @@ defineExpose({ measure, cardEl, waitUntilSettled })
 </script>
 
 <template>
-  <div :ref="setupObserver" class="preview-host" :data-scale="currentScale">
+  <div :ref="bindHost" class="preview-host" :data-scale="currentScale">
     <div class="preview-stage" :style="wrapperStyle">
       <div
         ref="cardEl"
@@ -155,9 +197,17 @@ defineExpose({ measure, cardEl, waitUntilSettled })
   gap: 14px;
   width: 100%;
   height: 100%;
+  /* 移动端可用高度只有几百像素，别再往里塞大内边距 */
   min-height: 0;
   overflow: hidden;
   padding: 24px 32px 12px;
+}
+
+@media (max-width: 900px) {
+  .preview-host {
+    padding: 12px 16px 8px;
+    gap: 8px;
+  }
 }
 .preview-stage {
   position: relative;

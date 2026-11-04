@@ -99,7 +99,8 @@ describe('导出：行内排版', () => {
     expect(lines).toBeGreaterThan(0)
 
     const pixels = await inspectImage(page, (await renderPng(page, 1)).dataUrl)
-    expect(pixels.transparent.left).toBe(0)
+    // 导出不再垫白底；圆角只切掉边上几十个像素，左边不该留整条空白
+    expect(pixels.transparent.left).toBeLessThan(0.05)
     expect(pixels.inkRatio).toBeGreaterThan(0.05)
   }, 60_000)
 })

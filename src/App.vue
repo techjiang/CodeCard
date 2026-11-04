@@ -43,6 +43,8 @@ function randomizeTemplate() {
   store.applyTemplate(picked.id)
 }
 
+// 导出必须始终指向活的卡片节点：模板异步加载完、切换面板之后，
+// 之前拿到的 DOM 可能已经被换掉了，所以依赖一变就重新注册
 function onPreviewReady(el: HTMLElement | null) {
   if (el) {
     exporter.register({
@@ -53,6 +55,12 @@ function onPreviewReady(el: HTMLElement | null) {
     })
   }
 }
+
+watch(
+  () => previewRef.value?.cardEl ?? null,
+  (el) => onPreviewReady(el),
+  { flush: 'post' },
+)
 
 function restoreEntry(entry: HistoryEntry) {
   store.restore({ card: entry.card, style: entry.style })
@@ -150,6 +158,7 @@ onMounted(async () => {
             @update:custom-size="(w, h) => store.setCustomSize(w, h)"
             @toggle-favorite="toggleFavorite"
             @randomize="randomizeTemplate"
+            @update:style="store.patchStyle"
           />
         </div>
       </aside>
@@ -306,6 +315,23 @@ onMounted(async () => {
   }
   .size-chip {
     display: none;
+  }
+  /* 顶部工具栏在窄屏会被撑爆：品牌名让位，文件名换行压到第二行 */
+  .topbar {
+    height: auto;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 12px;
+  }
+  .brand__text span {
+    max-width: 40vw;
+  }
+  .topbar__actions {
+    margin-left: auto;
+  }
+  .ghost-btn,
+  .export__btn {
+    white-space: nowrap;
   }
 }
 </style>

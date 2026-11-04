@@ -34,6 +34,11 @@ export function useCardEditor(options: EditorOptions = {}) {
     if (type === 'quote') style.fontSize = 'lg'
   }
 
+  /** 样式面板的增量更新：一次只改几个字段，别把整个 style 换掉，否则会打断正在编辑的输入框 */
+  function patchStyle(part: Partial<CardStyle>) {
+    Object.assign(style, part)
+  }
+
   function setSizePreset(preset: SizePreset) {
     style.size.preset = preset
     if (preset !== 'custom') {
@@ -88,6 +93,7 @@ export function useCardEditor(options: EditorOptions = {}) {
     revision,
     applyTemplate,
     setCardType,
+    patchStyle,
     setSizePreset,
     setCustomSize,
     addTag,
