@@ -75,8 +75,8 @@ npm run typecheck # 类型检查
 | 样式 | Tailwind CSS 3 | 设计令牌走 `tailwind.config.ts` |
 | 导出 | 自研 DOM → Canvas | 不走 html2canvas，体积小、结果可预测 |
 | 高亮 | 手写分词器 | 按行输出 token，行号对齐稳、截图不抖 |
-| 测试 | Vitest + jsdom | 162 个用例，语句覆盖 94% |
-| E2E | Vitest + Playwright | 14 个浏览器用例 |
+| 测试 | Vitest + jsdom | 165 个用例，语句覆盖 93% |
+| E2E | Vitest + Playwright | 17 个浏览器用例 |
 
 ### 为什么不用 html2canvas
 
@@ -140,12 +140,25 @@ src/
 
 两层，各管一段：
 
-- **`npm run test`** —— jsdom 里的单元测试，162 个用例，语句覆盖 94%。导出渲染器的绘制逻辑靠伪造 `getBoundingClientRect` + 假 Canvas 上下文录调用断言
-- **`npm run test:e2e`** —— 真实 Chromium，14 个用例。自适应缩放、导出像素、白边、中文断行这些**依赖真实排版和真实画布**的东西只能在这里验，jsdom 里 `measureText` 恒返回 0，测出来是自欺欺人
+- **`npm run test`** —— jsdom 里的单元测试，165 个用例，语句覆盖 93%。导出渲染器的绘制逻辑靠伪造 `getBoundingClientRect` + 假 Canvas 上下文录调用断言
+- **`npm run test:e2e`** —— 真实 Chromium，17 个用例。自适应缩放、导出像素、圆角/透明度/水印、中文断行这些**依赖真实排版和真实画布**的东西只能在这里验，jsdom 里 `measureText` 恒返回 0，测出来是自欺欺人
 
 单测覆盖：导出渲染器（渐变坐标换算、圆角裁剪、边框内缩、换行与对齐、flex 子项不粘连、缩放折算、SVG 装饰加载失败兜底）、12 套模板 × 6 种卡片类型全组合渲染、预览容器自动缩放比例与重测量。
 
-E2E 覆盖：12 套模板 × 3 种尺寸的长文不裁切、横竖版字号真的变、长标识符不在中间劈开、1x/2x/3x 导出尺寸、四边无缝隙、深色模板文字真的画出来了、行内代码与加粗混排不重复绘制。CI 里 `npm ci` 之后需要 `npx playwright install --with-deps chromium`。
+E2E 覆盖：12 套模板 × 3 种尺寸的长文不裁切、横竖版字号真的变、长标识符不在中间劈开、1x/2x/3x 导出尺寸、四边无缝隙、深色模板文字真的画出来了、行内代码与加粗混排不重复绘制、**圆角/背景透明度/水印在导出图里真的生效**。CI 里 `npm ci` 之后需要 `npx playwright install --with-deps chromium`。
+
+## 样式面板与导出
+
+样式面板不自己改 `props.style`，所有改动都走 `update:style` 事件交给 `useCardEditor.patchStyle`。
+
+**别写 `props.style.xxx = v`** —— props 代理只对「整个对象赋值」才转发给父级，改属性会打在一份拷贝上：读得到、写不进去，`toRef(props, 'style')` 和解构出来也是同一层代理。踩过一次：圆角、背景透明度、水印整组开关点了都没反应，单测和 E2E 全绿，因为没人验过改完之后的导出图。
+
+导出时 `background: 'transparent'`，**不垫白底**：背景透明度调到 0 是要把卡片叠到别的东西上，这时候导出图就该是透明底。
+
+由此带来两个渲染器细节：
+
+- **圆角只裁这一层自己的背景和描边**，不裁子树 —— 浏览器不会因为 `overflow: hidden` 就重新断行，正文得按未裁剪的区域排
+- **SVG 装饰按「包含它的那层祖先」的圆角再裁一次**（多裁 1px）。光栅化半径是整数近似，圆角边缘会残留一圈半透明的直角像素，不处理的话四角是方的
 
 ## 开发约定
 

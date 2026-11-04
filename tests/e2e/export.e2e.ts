@@ -26,12 +26,15 @@ describe('导出', () => {
 
     const png = await renderPng(page, 1)
     const pixels = await inspectImage(page, png.dataUrl)
+    // 导出不再垫白底（背景透明度调 0 时要能透明），所以「边」不该有整条空白：
+    // 渐变底会铺满每一行每一列，只有四个圆角被切掉
     for (const edge of ['top', 'bottom', 'left', 'right'] as const) {
-      expect(pixels.transparent[edge], `${edge} 边有非不透明像素`).toBe(0)
+      expect(pixels.transparent[edge], `${edge} 边不该留整条空白`).toBeLessThan(0.05)
     }
-    expect(pixels.corners.flat().every((v) => v > 0), '四角全黑，底色没铺上').toBe(true)
-    expect(pixels.darkRatio).toBeLessThan(0.02)
+    // 四角：渐变底从圆心方向铺过来，圆角处天然透明；要紧的是不能整张空掉
     expect(pixels.inkRatio).toBeGreaterThan(0.3)
+    expect(pixels.opaqueRatio).toBeGreaterThan(0.9)
+    expect(pixels.darkRatio).toBeLessThan(0.02)
   }, 60_000)
 
   test('多尺寸导出都不留白带', async () => {
@@ -43,7 +46,7 @@ describe('导出', () => {
       const pixels = await inspectImage(page, png.dataUrl)
       expect([pixels.width, pixels.height]).toEqual([SIZES[size].width, SIZES[size].height])
       for (const edge of ['top', 'bottom', 'left', 'right'] as const) {
-        expect(pixels.transparent[edge], `${size} ${edge} 边有缝隙`).toBe(0)
+        expect(pixels.transparent[edge], `${size} ${edge} 边留了整条空白`).toBeLessThan(0.05)
       }
     }
   }, 120_000)

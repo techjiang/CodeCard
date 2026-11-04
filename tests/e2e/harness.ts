@@ -111,7 +111,12 @@ export function readMetrics(page: Page): Promise<CardMetrics> {
   })
 }
 
-/** 直接调应用自己的导出渲染器，拿到和用户点「导出」完全一致的像素 */
+/**
+ * 直接调应用自己的导出渲染器，拿到和用户点「导出」完全一致的像素。
+ *
+ * 一起把导出时用到的样式快照带回来：测试要判断「这个配置有没有生效」，
+ * 只能看渲染器真正拿到的值，不能靠猜。
+ */
 export function renderPng(page: Page, scale: 1 | 2 | 3) {
   // 这段代码会被序列化后丢进浏览器执行，不能引用外部变量，路径只能现场拼
   return page.evaluate(async (s) => {
@@ -122,9 +127,35 @@ export function renderPng(page: Page, scale: 1 | 2 | 3) {
     const load = new Function('p', 'return import(p)') as (p: string) => Promise<typeof import('../../src/utils/dom-to-image')>
     const mod = await load(src)
     const style = JSON.parse(card.dataset.exportStyle ?? '{}')
-    const canvas = await mod.renderElementToCanvas(card, { scale: s, width: style.width, height: style.height })
-    return { width: canvas.width, height: canvas.height, dataUrl: canvas.toDataURL('image/png') }
+    // 和应用里 useExport 保持同一套参数（透明兜底），否则测出来的底色和真导出的不一样
+    const canvas = await mod.renderElementToCanvas(card, { scale: s, width: style.width, height: style.height, background: 'transparent' })
+    const root = document.querySelector<HTMLElement>('[data-card-root]')
+    const cs = root ? getComputedStyle(root) : null
+    // toDataURL 把像素提到事件循环之外编码：导出后立刻回读 canvas，
+    // 后面用例又去动 DOM，可能会读到编码途中的半成品（曾经就因此断言到全白）
+    const dataUrl = await new Promise<string>((resolve) => {
+      canvas.toBlob((blob) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result))
+        reader.readAsDataURL(blob!)
+      }, 'image/png')
+    })
+    return {
+      width: canvas.width,
+      height: canvas.height,
+      dataUrl,
+      computed: cs ? { borderRadius: cs.borderTopLeftRadius, backgroundColor: cs.backgroundColor } : null,
+    }
   }, scale)
+}
+
+/** 导出渲染器读的是卡片根节点的计算样式，这里把它读出来断言 */
+export function cardComputedStyle(page: Page) {
+  return page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>('[data-card-export] [data-card-root]')!
+    const cs = getComputedStyle(root)
+    return { borderRadius: cs.borderTopLeftRadius, backgroundColor: cs.backgroundColor, opacity: cs.opacity }
+  })
 }
 
 /** 统计图片四边的像素，判断有没有白边/黑边 */
@@ -162,10 +193,14 @@ export async function inspectImage(page: Page, dataUrl: string) {
         if (lum < 8) dark++
       }
     }
+    let opaqueCount = 0
+    for (let i = 3; i < full.length; i += 4) if (full[i] === 255) opaqueCount++
     return {
       width: canvas.width,
       height: canvas.height,
       corners: [corner(0, 0), corner(canvas.width - 1, 0), corner(0, canvas.height - 1), corner(canvas.width - 1, canvas.height - 1)],
+      /** 完全不透明的像素占比：底色在不在，看这个而不是看「墨迹」 */
+      opaqueRatio: opaqueCount / (full.length / 4),
       transparent: {
         top: edgeIsTransparent('top'),
         bottom: edgeIsTransparent('bottom'),
@@ -176,4 +211,90 @@ export async function inspectImage(page: Page, dataUrl: string) {
       inkRatio: ink / (full.length / 4),
     }
   }, dataUrl)
+}
+
+/** 点样式面板里的按钮/复选框，走真实 UI 而不是直接改 store */
+export async function clickRadius(page: Page, radius: 0 | 8 | 16 | 24) {
+  await page.locator('.style-panel .seg--wide button', { hasText: `${radius}px` }).click()
+  await settle(page)
+}
+
+export async function setBackgroundOpacity(page: Page, value: number) {
+  const slider = page.locator('.style-panel input[type="range"]')
+  await slider.evaluate((el: HTMLInputElement, v: number) => {
+    el.value = String(v)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  }, value)
+  await settle(page)
+}
+
+export async function enableWatermark(page: Page, text: string) {
+  await page.locator('.style-panel .switch').check()
+  await page.locator('.style-panel input[placeholder="@你的昵称"]').fill(text)
+  await settle(page)
+}
+
+/**
+ * 统计图片里某一层的覆盖率，用来验证「这块底色到底在不在」。
+ *
+ * 不能只看墨迹：浅色底（白底配深字）在「有没有底」这件事上是反的。
+ * 这里把不透明像素按亮度分三档数出来，调用方按需挑一档断言。
+ */
+export async function layerCoverage(page: Page, dataUrl: string) {
+  return page.evaluate(async (url) => {
+    const img = new Image()
+    img.src = url
+    await img.decode()
+    const canvas = document.createElement('canvas')
+    canvas.width = img.naturalWidth
+    canvas.height = img.naturalHeight
+    const ctx = canvas.getContext('2d')!
+    ctx.drawImage(img, 0, 0)
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height)
+    const total = data.length / 4
+    let opaque = 0
+    let bright = 0
+    let dark = 0
+    for (let i = 0; i < data.length; i += 4) {
+      const a = data[i + 3]
+      if (a === 0) continue
+      if (a === 255) opaque++
+      // 预乘之外直接按通道算亮度，白底 255、深字 20 左右，分得开
+      const lum = (data[i] + data[i + 1] + data[i + 2]) / 3
+      if (lum > 235) bright++
+      else if (lum < 80) dark++
+    }
+    return { total, opaque: opaque / total, bright: bright / total, dark: dark / total }
+  }, dataUrl)
+}
+
+/** 取图片某区域的墨迹占比，用来验证内容真的被画到了那个位置 */
+export async function inkInRegion(
+  page: Page,
+  dataUrl: string,
+  region: { x: number; y: number; w: number; h: number },
+  threshold = 40,
+) {
+  return page.evaluate(
+    async ({ url, r, t }) => {
+      const img = new Image()
+      img.src = url
+      await img.decode()
+      const canvas = document.createElement('canvas')
+      canvas.width = img.naturalWidth
+      canvas.height = img.naturalHeight
+      const ctx = canvas.getContext('2d')!
+      ctx.drawImage(img, 0, 0)
+      const { data } = ctx.getImageData(r.x, r.y, r.w, r.h)
+      let ink = 0
+      for (let i = 0; i < data.length; i += 4) {
+        const a = data[i + 3]
+        if (a === 0) continue
+        const bg = 235
+        if (Math.abs(data[i] - bg) > t || Math.abs(data[i + 1] - bg) > t || Math.abs(data[i + 2] - bg) > t) ink++
+      }
+      return ink / (data.length / 4)
+    },
+    { url: dataUrl, r: region, t: threshold },
+  )
 }

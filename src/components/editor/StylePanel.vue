@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { CardStyle } from '@/types/card'
 import { FONT_SIZE_MAP } from '@/types/card'
 import TemplatePicker from './TemplatePicker.vue'
@@ -13,10 +14,29 @@ const emit = defineEmits<{
   'update:custom-size': [w: number, h: number]
   'toggle-favorite': [v: string]
   'randomize': []
+  'update:style': [v: Partial<CardStyle>]
 }>()
 
 const SIZES = Object.keys(FONT_SIZE_MAP) as Array<keyof typeof FONT_SIZE_MAP>
 const RADII = [0, 8, 16, 24] as const
+
+/**
+ * 面板不自己改样式，一律抛事件让父级改。
+ *
+ * 坑在这里：`props.style.xxx = v` 会静默失败 —— 读得到、写不进去（props 代理内部是一份拷贝），
+ * `toRef(props, 'style')` / 解构出来也是同一层代理，照样无效。
+ * 表现就是按钮状态变了、卡片纹丝不动：圆角、透明度、水印这一整组开关曾经全是摆设。
+ */
+function patch(part: Partial<CardStyle>) {
+  emit('update:style', part)
+}
+
+/** 水印是可选字段，面板里给个兜底值，模板里不必到处写 `style.watermark!` */
+const watermark = computed(() => props.style.watermark ?? { enabled: false, text: '', position: 'bottom-right' as const })
+
+function patchWatermark(part: Partial<NonNullable<CardStyle['watermark']>>) {
+  patch({ watermark: { enabled: false, position: 'bottom-right', ...props.style.watermark, ...part } })
+}
 </script>
 
 <template>
@@ -51,15 +71,16 @@ const RADII = [0, 8, 16, 24] as const
             :key="s"
             type="button"
             :data-active="style.fontSize === s"
-            @click="style.fontSize = s"
+            @click="patch({ fontSize: s })"
           >
             {{ { sm: '小', md: '中', lg: '大' }[s] }}
           </button>
-          <button type="button" :data-active="style.fontSize === 'custom'" @click="style.fontSize = 'custom'">自定义</button>
+          <button type="button" :data-active="style.fontSize === 'custom'" @click="patch({ fontSize: 'custom' })">自定义</button>
         </div>
         <input
           v-if="style.fontSize === 'custom'"
-          v-model.number="style.customFontSize"
+          :value="style.customFontSize"
+          @input="patch({ customFontSize: Number(($event.target as HTMLInputElement).value) })"
           class="field-input"
           type="number"
           min="16"
@@ -77,7 +98,7 @@ const RADII = [0, 8, 16, 24] as const
           :key="r"
           type="button"
           :data-active="style.borderRadius === r"
-          @click="style.borderRadius = r"
+          @click="patch({ borderRadius: r })"
         >
           {{ r }}px
         </button>
@@ -96,12 +117,26 @@ const RADII = [0, 8, 16, 24] as const
     <section class="group">
       <header class="group__head"><h3>水印</h3></header>
       <label class="switch-line">
-        <input v-model="style.watermark!.enabled" type="checkbox" class="switch" />
+        <input
+          type="checkbox"
+          class="switch"
+          :checked="watermark.enabled"
+          @change="patchWatermark({ enabled: ($event.target as HTMLInputElement).checked })"
+        />
         <span class="field-label">显示水印</span>
       </label>
-      <template v-if="style.watermark!.enabled">
-        <input v-model="style.watermark!.text" class="field-input" placeholder="@你的昵称" />
-        <select v-model="style.watermark!.position" class="field-input">
+      <template v-if="watermark.enabled">
+        <input
+          class="field-input"
+          placeholder="@你的昵称"
+          :value="watermark.text ?? ''"
+          @input="patchWatermark({ text: ($event.target as HTMLInputElement).value })"
+        />
+        <select
+          class="field-input"
+          :value="watermark.position"
+          @change="patchWatermark({ position: ($event.target as HTMLSelectElement).value as 'bottom-right' | 'bottom-center' | 'top-right' })"
+        >
           <option value="bottom-right">右下角</option>
           <option value="bottom-center">底部居中</option>
           <option value="top-right">右上角</option>
@@ -111,7 +146,8 @@ const RADII = [0, 8, 16, 24] as const
 
     <section class="group">
       <header class="group__head"><h3>背景透明度</h3><span class="value">{{ style.backgroundOpacity }}%</span></header>
-      <input v-model.number="style.backgroundOpacity" type="range" min="0" max="100" class="range" />
+      <input :value="style.backgroundOpacity"
+        @input="patch({ backgroundOpacity: Number(($event.target as HTMLInputElement).value) })" type="range" min="0" max="100" class="range" />
     </section>
   </div>
 </template>

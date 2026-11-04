@@ -28,7 +28,9 @@ export function useExport() {
     const t = target.value
     if (!t?.element) throw new Error('卡片尚未挂载')
     const { width, height } = t.style.size
-    const canvas = await renderElementToCanvas(t.element, { scale, width, height })
+    // 导出图必须带透明通道：背景透明度调成 0 时要能叠到别的东西上。
+    // 渲染器的兜底底色默认刷白，那就是「导出一张白底图」而不是「一张透明底卡」。
+    const canvas = await renderElementToCanvas(t.element, { scale, width, height, background: 'transparent' })
     const blob = await canvasToBlob(canvas)
     return {
       blob,
