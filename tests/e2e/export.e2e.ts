@@ -81,6 +81,78 @@ describe('导出', () => {
     expect(pixels.inkRatio).toBeGreaterThan(0.2)
   }, 60_000)
 
+  test('长标题在词边界换行，不会把标识符从中间劈开', async () => {
+    const page = await openApp()
+    await seedCard(page, { type: 'knowledge', title: 'Proxy 与 defineProperty', content: '一句话' })
+    await pickTemplate(page, '渐变紫')
+
+    // 预览里浏览器把标题排成两行：`Proxy 与` / `defineProperty`
+    const preview = await page.evaluate(() => {
+      const title = document.querySelector<HTMLElement>('[data-card-root] .cc-title')!
+      const range = document.createRange()
+      range.selectNodeContents(title)
+      const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0)
+      const card = document.querySelector<HTMLElement>('[data-card-export]')!
+      const c = card.getBoundingClientRect()
+      const t = title.getBoundingClientRect()
+      const k = card.offsetWidth / c.width
+      return {
+        lines: new Set(rects.map((r) => Math.round(r.top))).size,
+        band: { top: Math.round((t.top - c.top) * k), bottom: Math.round((t.bottom - c.top) * k) },
+        boxWidth: Math.round(t.width * k),
+      }
+    })
+    expect(preview.lines).toBe(2)
+
+    const png = await renderPng(page, 1)
+    // 标题是白字压深底：按行扫近白像素，把行数和非末行/末行宽度量出来
+    const exported = await page.evaluate(
+      async ({ url, band }) => {
+        const img = new Image()
+        img.src = url
+        await img.decode()
+        const c = document.createElement('canvas')
+        c.width = img.naturalWidth
+        c.height = img.naturalHeight
+        const ctx = c.getContext('2d')!
+        ctx.drawImage(img, 0, 0)
+        const { data } = ctx.getImageData(0, band.top, c.width, band.bottom - band.top)
+        const rows: Array<{ w: number } | null> = []
+        for (let y = 0; y < band.bottom - band.top; y++) {
+          let minX = Infinity
+          let maxX = -1
+          for (let x = 0; x < c.width; x++) {
+            const i = (y * c.width + x) * 4
+            if (data[i + 3] > 200 && data[i] > 230 && data[i + 1] > 230 && data[i + 2] > 230) {
+              if (x < minX) minX = x
+              if (x > maxX) maxX = x
+            }
+          }
+          rows.push(maxX > minX ? { w: maxX - minX } : null)
+        }
+        const lines: Array<{ w: number }> = []
+        let cur: { w: number } | null = null
+        for (const r of rows) {
+          if (r && r.w > 3) {
+            if (!cur) {
+              cur = { w: 0 }
+              lines.push(cur)
+            }
+            cur.w = Math.max(cur.w, r.w)
+          } else cur = null
+        }
+        // 抗锯齿会在笔画间隙里留几行窄缝，高度过小的不算一整行
+        return lines.filter((l) => l.w > 8)
+      },
+      { url: png.dataUrl, band: preview.band },
+    )
+
+    // 行数对上，且末行不是被劈下来的两三个字母（`ty` 只有几十像素宽）
+    expect(exported.length).toBe(preview.lines)
+    const last = exported[exported.length - 1].w
+    expect(last).toBeGreaterThan(preview.boxWidth * 0.4)
+  }, 60_000)
+
   test('导出的换行位置和预览一致（不差行）', async () => {
     const page = await openApp()
     await seedCard(page, { type: 'quote', title: '换行一致', content: QUOTE_TEXT })

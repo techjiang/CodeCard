@@ -271,6 +271,18 @@ describe('导出渲染：文本', () => {
     expect(texts()).toEqual(['一二三四五', '六七八九十'])
   })
 
+  test('超宽文本在词边界断开，不把标识符从中间劈开', async () => {
+    const root = fakeRect(document.createElement('div'), 400, 400)
+    // 拉丁字母按 10px 算，200px 一行放得下 20 个字符。
+    // 逐字硬切会排成 `Proxy 与 defineProp` / `erty`，浏览器是在空格处断的
+    const p = styled(fakeRect(document.createElement('p'), 200, 200), { fontSize: '20px' })
+    p.textContent = 'Proxy 与 defineProperty'
+    root.appendChild(p)
+    document.body.appendChild(root)
+    await renderElementToCanvas(root, { scale: 1, width: 400, height: 400 })
+    expect(texts()).toEqual(['Proxy 与', 'defineProperty'])
+  })
+
   test('居中文本以内容区中心为锚点', async () => {
     const root = fakeRect(document.createElement('div'), 200, 400)
     const p = styled(fakeRect(document.createElement('div'), 200, 40), { fontSize: '20px', textAlign: 'center' })

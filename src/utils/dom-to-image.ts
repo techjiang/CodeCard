@@ -213,21 +213,7 @@ function clipText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number,
 function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, ellipsis: boolean): string[] {
   if (!text) return []
   if (maxWidth <= 0) return [text]
-  const chars = Array.from(clipText(ctx, text, maxWidth, ellipsis))
-  const limit = maxWidth + 1
-  const lines: string[] = []
-  let current = ''
-  for (const ch of chars) {
-    const test = current + ch
-    if (ctx.measureText(test).width > limit && current) {
-      lines.push(current)
-      current = ch
-    } else {
-      current = test
-    }
-  }
-  if (current) lines.push(current)
-  return lines
+  return greedyLines(ctx, clipText(ctx, text, maxWidth, ellipsis), maxWidth)
 }
 
 // ---------- 行盒 ----------
@@ -264,12 +250,52 @@ function isBreakSpace(ch: string): boolean {
   return ch === ' ' || ch === '\u200B'
 }
 
+/** 汉字与中文标点：它们之间任意位置都能断 */
+const CJK = /[\u2e80-\u9fff\u3000-\u303f\uff00-\uffef]/
+
+/** 分隔符之后可以断：`a/b`、`a.b`、`a-b` 看着不断，实际浏览器也接受 */
+const BREAK_AFTER = '._/-'
+
+/** 位置 i 是不是一个浏览器认可的断点（落在 chars[i-1] 与 chars[i] 之间） */
+function isBreakable(chars: string[], i: number): boolean {
+  if (i <= 0 || i >= chars.length) return false
+  const before = chars[i - 1]
+  const after = chars[i]
+  if (isBreakSpace(before) || isBreakSpace(after)) return true
+  if (BREAK_AFTER.includes(before)) return true
+  return CJK.test(before) || CJK.test(after)
+}
+
 /**
  * 在一段要断开的字符里往前找一个体面的断点：
  * 空格、零宽空格、CJK 边界，或者 . _ / - 之后。找不到就按原位置硬断。
+ *
+ * 不找断点的后果是逐字硬切：`Proxy 与 defineProperty` 会排成
+ * `Proxy 与 defineP` / `roperty`，而预览里浏览器在空格处断成 `Proxy 与` / `defineProperty`。
  */
 function preferBreak(chars: string[], cut: number): number {
+  for (let i = cut; i > 0; i--) if (isBreakable(chars, i)) return i
   return cut
+}
+
+/**
+ * 贪心断行：一行能塞多少塞多少，回退到最近的合法断点。
+ * 只按宽度切的话会把词从中间劈开，导出的换行位置就和预览对不上。
+ */
+function greedyLines(ctx: CanvasRenderingContext2D, text: string, limit: number): string[] {
+  const chars = Array.from(text)
+  const lines: string[] = []
+  let start = 0
+  while (start < chars.length) {
+    // 量整串前缀而不是逐字累加：字距、连字都会让单字宽度之和偏大
+    let fit = start
+    while (fit < chars.length && ctx.measureText(chars.slice(start, fit + 1).join('')).width <= limit + 1) fit++
+    let cut = fit >= chars.length ? chars.length : start + preferBreak(chars.slice(start), Math.max(1, fit - start))
+    if (cut <= start) cut = start + 1
+    lines.push(chars.slice(start, cut).join('').trim())
+    start = cut
+  }
+  return lines
 }
 
 /**
@@ -294,26 +320,7 @@ function splitLines(
   // 行盒宽度就是这段文字真正能用的宽度
   const limit = width
 
-  const chars = Array.from(text)
-  const lines: string[] = []
-  let rest = chars.slice()
-  while (rest.length) {
-    let used = 0
-    let cut = rest.length
-    for (let i = 0; i < rest.length; i++) {
-      const w = ctx.measureText(rest[i]).width
-      if (used + w > limit + 1) {
-        cut = i
-        break
-      }
-      used += w
-    }
-    // 优先在有意义的位置断开，别把词从中间劈开（浏览器断点多半也在这些地方）
-    if (cut < rest.length) cut = preferBreak(rest, Math.max(1, cut))
-    const line = rest.slice(0, cut).join('')
-    lines.push(line.trim())
-    rest = rest.slice(cut)
-  }
+  const lines = greedyLines(ctx, text, limit)
   // 除末行外都要贴着右边缘才对得上浏览器的排版
   const tolerance = ctx.measureText('中').width * 0.75
   const clean = lines
