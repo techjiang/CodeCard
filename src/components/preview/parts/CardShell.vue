@@ -58,6 +58,8 @@ const vars = computed(() => ({
   z-index: 2;
   flex: 1 1 auto;
   min-height: 0;
+  /* 同上：不许被内容顶宽 */
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }

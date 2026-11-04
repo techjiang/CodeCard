@@ -82,7 +82,17 @@ watch(() => [props.style.size.width, props.style.size.height], () => measure())
 
 watch(cardEl, (el) => emit('ready', el))
 
-defineExpose({ measure, cardEl })
+/**
+ * 模板里的自适应还在逐档试缩时不导出，免得截到中间态。
+ * 模板是异步组件，它自己挂在 window 上的调试钩子不算数，必须用组件实例的 ref。
+ */
+async function waitUntilSettled() {
+  const instance = (templateComponent.value as unknown as ComponentPublicInstance | null)?.$
+  const fn = (instance?.exposed as { waitForSettle?: () => Promise<void> } | undefined)?.waitForSettle
+  await fn?.()
+}
+
+defineExpose({ measure, cardEl, waitUntilSettled })
 </script>
 
 <template>

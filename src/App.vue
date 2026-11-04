@@ -45,7 +45,12 @@ function randomizeTemplate() {
 
 function onPreviewReady(el: HTMLElement | null) {
   if (el) {
-    exporter.register({ element: el, card: store.card, style: store.style })
+    exporter.register({
+      element: el,
+      card: store.card,
+      style: store.style,
+      waitUntilReady: () => previewRef.value?.waitUntilSettled() ?? Promise.resolve(),
+    })
   }
 }
 
@@ -74,6 +79,11 @@ const sizeText = computed(() => {
 })
 
 const fileLabel = computed(() => store.card.filename || (store.card.title ? store.card.title.slice(0, 18) : '未命名卡片'))
+
+/** E2E 钩子：只挂到 window，不参与任何界面逻辑 */
+if (typeof window !== 'undefined') {
+  ;(window as unknown as Record<string, unknown>).__ccExport = (scale: 1 | 2 | 3) => exporter.render(scale)
+}
 
 onMounted(async () => {
   await nextTick()
