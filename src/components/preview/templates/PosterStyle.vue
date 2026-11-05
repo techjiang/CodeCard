@@ -28,7 +28,7 @@ defineExpose({ refit, waitForSettle })
         <circle cx="100%" cy="100%" r="240" fill="#FFFFFF" fill-opacity="0.06" />
         <circle cx="100%" cy="100%" r="150" fill="#FFFFFF" fill-opacity="0.05" />
         <rect x="0" y="0" width="100%" height="10" fill="#FFFFFF" fill-opacity="0.9" />
-        <path d="M0 62% L 100% 42%" stroke="#FFFFFF" stroke-opacity="0.1" stroke-width="2" />
+        <path d="M0 670 L 1200 454" stroke="#FFFFFF" stroke-opacity="0.1" stroke-width="2" />
       </svg>
     </template>
 

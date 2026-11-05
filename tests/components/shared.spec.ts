@@ -13,7 +13,13 @@ function fakeStore(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     exporting: ref(false),
     lastError: ref<string | null>(null),
-    exportPng: vi.fn(async (scale: number) => ({ blob: new Blob(), width: 1080 * scale, height: 1080 * scale, filename: 'x.png' })),
+    exportPng: vi.fn(async (scale: number) => ({
+      blob: new Blob(),
+      width: 1080 * scale,
+      height: 1080 * scale,
+      filename: `x_${scale}x.png`,
+      format: 'png',
+    })),
     copyToClipboard: vi.fn(async () => true),
     ...overrides,
   } as unknown as ExportStore
@@ -34,9 +40,30 @@ describe('导出按钮', () => {
     const wrapper = mount(ExportButton, { props: { store: fakeStore() } })
     expect(wrapper.find('.menu').exists()).toBe(false)
     await wrapper.find('.export__btn').trigger('click')
-    expect(wrapper.findAll('.menu__item')).toHaveLength(4)
+    expect(wrapper.findAll('.menu__item')).toHaveLength(5)
     expect(wrapper.text()).toContain('1x')
+    expect(wrapper.text()).toContain('SVG')
     expect(wrapper.text()).toContain('复制到剪贴板')
+  })
+
+  test('选 SVG 走同一个导出入口，倍率传 2、格式传 svg', async () => {
+    const store = fakeStore({
+      exportPng: vi.fn(async () => ({ blob: new Blob(), width: 1080, height: 1080, filename: 'x.svg', format: 'svg' })),
+    })
+    const wrapper = mount(ExportButton, { props: { store } })
+    await wrapper.find('.export__btn').trigger('click')
+    const svgItem = wrapper.findAll('.menu__item').find((b) => b.text().startsWith('SVG'))!
+    await svgItem.trigger('click')
+    expect(store.exportPng).toHaveBeenCalledWith(2, 'svg')
+    await vi.waitFor(() => expect(wrapper.find('.toast').text()).toContain('已导出 SVG 1080×1080'))
+  })
+
+  test('SVG 导出失败也给出错误提示', async () => {
+    const store = fakeStore({ exportPng: vi.fn(async () => null), lastError: ref('卡片尚未挂载') })
+    const wrapper = mount(ExportButton, { props: { store } })
+    await wrapper.find('.export__btn').trigger('click')
+    await wrapper.findAll('.menu__item').find((b) => b.text().startsWith('SVG'))!.trigger('click')
+    await vi.waitFor(() => expect(wrapper.find('.toast').text()).toBe('卡片尚未挂载'))
   })
 
   test('导出中按钮禁用并提示', () => {
@@ -71,14 +98,14 @@ describe('导出按钮', () => {
     const ok = fakeStore()
     const a = mount(ExportButton, { props: { store: ok } })
     await a.find('.export__btn').trigger('click')
-    await a.findAll('.menu__item')[3].trigger('click')
+    await a.findAll('.menu__item')[4].trigger('click')
     expect(ok.copyToClipboard).toHaveBeenCalledWith(2)
     await vi.waitFor(() => expect(a.find('.toast').text()).toContain('已复制'))
 
     const fail = fakeStore({ copyToClipboard: vi.fn(async () => false), lastError: ref('当前浏览器不支持复制图片，请改用下载') })
     const b = mount(ExportButton, { props: { store: fail } })
     await b.find('.export__btn').trigger('click')
-    await b.findAll('.menu__item')[3].trigger('click')
+    await b.findAll('.menu__item')[4].trigger('click')
     await vi.waitFor(() => expect(b.find('.toast').text()).toContain('不支持复制'))
   })
 })
