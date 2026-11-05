@@ -26,6 +26,13 @@ async function download(scale: ExportScale) {
   flash(result ? `已导出 ${result.width}×${result.height}` : props.store.lastError.value ?? '导出失败')
 }
 
+/** SVG 走同一个渲染器，只是把画好的位图裹进矢量容器：预览什么样，导出就是什么样 */
+async function downloadSvg() {
+  open.value = false
+  const result = await props.store.exportPng(2, 'svg')
+  flash(result ? `已导出 SVG ${result.width}×${result.height}` : props.store.lastError.value ?? '导出失败')
+}
+
 async function copy() {
   open.value = false
   const ok = await props.store.copyToClipboard(2)
@@ -48,6 +55,10 @@ async function copy() {
         <span>{{ s.hint }}</span>
       </button>
       <div class="menu__sep" />
+      <button type="button" class="menu__item" @click="downloadSvg">
+        <strong>SVG</strong>
+        <span>矢量容器，缩到多大都不糊</span>
+      </button>
       <button type="button" class="menu__item" @click="copy">
         <strong>复制到剪贴板</strong>
         <span>2x 分辨率，直接粘贴</span>

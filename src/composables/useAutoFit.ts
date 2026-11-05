@@ -40,9 +40,21 @@ function transformScale(el: HTMLElement): number {
   return scale > 0 ? scale : 1
 }
 
+/**
+ * 版心元素。
+ *
+ * querySelector 不含自己：root 恰好就是 .cc-content 时，直接查会漏掉它、
+ * 退到 firstElementChild，量出来是另一棵子树的尺寸（甚至 0）——
+ * 数字读得出来，但量的不是这个东西。
+ */
+function courtOf(el: HTMLElement): HTMLElement | null {
+  if (el.classList.contains('cc-content')) return el
+  return el.querySelector<HTMLElement>('.cc-content') ?? (el.firstElementChild as HTMLElement | null)
+}
+
 /** .cc-content 的总自然高度（含 gap，正文按内容撑开算） */
 function naturalTotal(el: HTMLElement): number {
-  const content = el.querySelector<HTMLElement>('.cc-content') ?? (el.firstElementChild as HTMLElement | null)
+  const content = courtOf(el)
   if (!content) return 0
   const cs = getComputedStyle(content)
   const gap = parseFloat(cs.rowGap || cs.gap || '0') || 0
@@ -122,11 +134,15 @@ export function useAutoFit(root: Ref<HTMLElement | null>, deps: () => unknown) {
   function fits(el: HTMLElement, target: number, slack = 1): boolean {
     const natural = naturalTotal(el)
     if (!natural || natural > target + slack) return false
-    const content = el.querySelector<HTMLElement>('.cc-content') ?? el.firstElementChild
+    const content = courtOf(el)
     if (!content) return true
     if (content.scrollWidth > content.clientWidth + 2) return false
-    // 行内元素（代码片段、行内代码）不参与 scrollWidth，得量真实行盒
+    // 行内元素（代码片段、行内代码）不参与 scrollWidth，得量真实行盒。
+    // 部分环境（jsdom）没有 Range 的盒子 API，量不到就当没有横向溢出 ——
+    // 真实排版里这一层有 E2E 兜着，别为了凑这条判定把整个自适应卡死。
+    if (typeof document.createRange !== 'function') return true
     const range = document.createRange()
+    if (typeof range.getClientRects !== 'function') return true
     range.selectNodeContents(content)
     const boxRight = content.getBoundingClientRect().right
     for (const rect of Array.from(range.getClientRects())) {
@@ -187,6 +203,31 @@ export function useAutoFit(root: Ref<HTMLElement | null>, deps: () => unknown) {
     return settleBalance()
   }
 
+  /**
+   * 立刻重算一遍并等它收敛。
+   *
+   * 导出前用：卡片可能刚从 `display: none` 里被支起来（手机端停在别的 Tab 上），
+   * 之前的自适应是在零尺寸下算的，得按现在的真实盒子重来一次。
+   */
+  async function refit(): Promise<void> {
+    if (running) {
+      pending = true
+      await waitForSettle()
+      return
+    }
+    running = true
+    try {
+      await measure()
+      settled.value = true
+    } finally {
+      running = false
+      if (pending) {
+        pending = false
+        schedule()
+      }
+    }
+  }
+
   /** 等这一轮测量收敛：导出前要用，否则可能截到缩放的中间态 */
   async function waitForSettle(timeout = 1600): Promise<void> {
     const start = Date.now()
@@ -232,7 +273,7 @@ export function useAutoFit(root: Ref<HTMLElement | null>, deps: () => unknown) {
 
   /** 放大倍数上限：保证放大后每行仍有足够字数，别把句子排成竖排 */
   function charLimit(el: HTMLElement): number {
-    const content = el.querySelector<HTMLElement>('.cc-content')
+    const content = courtOf(el)
     if (!content) return MAX_GROW
     const fontSize = parseFloat(getComputedStyle(content).fontSize) || 0
     if (fontSize <= 0) return MAX_GROW
@@ -331,5 +372,5 @@ export function useAutoFit(root: Ref<HTMLElement | null>, deps: () => unknown) {
     observer?.disconnect()
   })
 
-  return { scale, settled, balance, measure, waitForSettle }
+  return { scale, settled, balance, measure, refit, waitForSettle }
 }

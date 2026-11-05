@@ -1,9 +1,11 @@
 import { computed, ref } from 'vue'
 import type { CardData, CardStyle } from '@/types/card'
-import type { ExportResult, ExportScale } from '@/types/export'
+import type { ExportFormat, ExportResult, ExportScale } from '@/types/export'
 import { renderElementToCanvas, canvasToBlob } from '@/utils/dom-to-image'
+import { renderElementToSvg } from '@/utils/svg-export'
 import { buildFileName, downloadBlob } from '@/utils/filename'
 import { copyBlobToClipboard } from '@/utils/clipboard'
+import { withMeasurableLayout } from '@/utils/layout'
 
 export interface ExportTarget {
   /** 卡片根节点（固定 1:1 像素尺寸） */
@@ -26,28 +28,42 @@ export function useExport() {
     target.value = t
   }
 
-  async function render(scale: ExportScale): Promise<ExportResult> {
+  async function render(scale: ExportScale, format: ExportFormat = 'png'): Promise<ExportResult> {
     const t = target.value
     if (!t?.element) throw new Error('卡片尚未挂载')
-    await t.waitUntilReady?.()
     const { width, height } = t.style.size
-    // 导出图必须带透明通道：背景透明度调成 0 时要能叠到别的东西上。
-    // 渲染器的兜底底色默认刷白，那就是「导出一张白底图」而不是「一张透明底卡」。
-    const canvas = await renderElementToCanvas(t.element, { scale, width, height, background: 'transparent' })
-    const blob = await canvasToBlob(canvas)
+    // 手机端没选中「预览」Tab 时，卡片所在面板是 display:none，量什么都是 0，
+    // 直接画会得到一张空白图。先让它有布局，画完还原。
+    const payload = await withMeasurableLayout(t.element, { width, height }, async () => {
+      // 等自适应量完，否则可能截到逐档试缩的中间态
+      await t.waitUntilReady?.()
+      if (format === 'svg') {
+        // SVG 打开后就是设计尺寸，不再乘倍率
+        return new Blob([await renderElementToSvg({ element: t.element!, width, height, scale })], {
+          type: 'image/svg+xml',
+        })
+      }
+      // 导出图必须带透明通道：背景透明度调成 0 时要能叠到别的东西上。
+      // 渲染器的兜底底色默认刷白，那就是「导出一张白底图」而不是「一张透明底卡」。
+      return canvasToBlob(
+        await renderElementToCanvas(t.element!, { scale, width, height, background: 'transparent' }),
+      )
+    })
+
     return {
-      blob,
-      width: Math.round(width * scale),
-      height: Math.round(height * scale),
-      filename: buildFileName(t.card.title, new Date(), 'png'),
+      blob: payload,
+      width: format === 'svg' ? width : Math.round(width * scale),
+      height: format === 'svg' ? height : Math.round(height * scale),
+      filename: buildFileName(t.card.title, new Date(), format),
+      format,
     }
   }
 
-  async function exportPng(scale: ExportScale = 1): Promise<ExportResult | null> {
+  async function exportPng(scale: ExportScale = 1, format: ExportFormat = 'png'): Promise<ExportResult | null> {
     exporting.value = true
     lastError.value = null
     try {
-      const result = await render(scale)
+      const result = await render(scale, format)
       downloadBlob(result.blob, result.filename)
       lastResult.value = result
       return result

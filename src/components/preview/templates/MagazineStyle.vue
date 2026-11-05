@@ -9,8 +9,8 @@ import { useAutoFit } from '@/composables/useAutoFit'
 const props = defineProps<{ card: CardData; style: CardStyle }>()
 
 const contentEl = ref<HTMLElement | null>(null)
-const { scale, waitForSettle } = useAutoFit(contentEl, () => [props.card, props.style])
-defineExpose({ waitForSettle })
+const { scale, refit, waitForSettle } = useAutoFit(contentEl, () => [props.card, props.style])
+defineExpose({ refit, waitForSettle })
 // 杂志风本来就顶上排，底部留白是版式的一部分，不跟着居中
 const pad = () => Math.round(props.style.size.width * 0.075)
 const serif = '"Songti SC", "Source Han Serif SC", Georgia, serif'

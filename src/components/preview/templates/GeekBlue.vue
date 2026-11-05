@@ -9,8 +9,8 @@ import Watermark from '../parts/Watermark.vue'
 const props = defineProps<{ card: CardData; style: CardStyle }>()
 
 const contentEl = ref<HTMLElement | null>(null)
-const { scale, balance, waitForSettle } = useAutoFit(contentEl, () => [props.card, props.style])
-defineExpose({ waitForSettle })
+const { scale, balance, refit, waitForSettle } = useAutoFit(contentEl, () => [props.card, props.style])
+defineExpose({ refit, waitForSettle })
 // 内容装得下时把 .cc-content 竖着居中；溢出时（balance = 1）交还给 flex 自己排
 // 居中要写在 .cc-content 上：它自己是 height:100% 的 flex 列，排在版心里不会动
 const fitStyle = computed(() => ({ justifyContent: balance.value <= 0.5 ? 'center' : 'flex-start' }))
@@ -40,7 +40,7 @@ const pad = () => Math.round(props.style.size.width * 0.065)
         <rect width="100%" height="100%" fill="url(#gb-glow)" />
         <circle cx="92%" cy="6%" r="180" fill="none" stroke="url(#gb-line)" stroke-width="1.4" />
         <circle cx="92%" cy="6%" r="260" fill="none" stroke="url(#gb-line)" stroke-width="1" opacity="0.5" />
-        <path d="M0 92% Q 25% 78%, 50% 92% T 100% 88%" fill="none" stroke="url(#gb-line)" stroke-width="1.6" opacity="0.6" />
+        <path d="M0 580 Q 300 492 600 580 T 1200 555" fill="none" stroke="url(#gb-line)" stroke-width="1.6" opacity="0.6" />
       </svg>
     </template>
 

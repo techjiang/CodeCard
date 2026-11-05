@@ -44,6 +44,26 @@ describe('Chinese Typography', () => {
     expect(normalizePunctuation('"english"')).toBe('"english"')
   })
 
+  test('中文标点不跟拉丁字符之间补空格', () => {
+    // 行内标点紧跟上文，不是「中英之间」
+    expect(pangu('读取 。')).toBe('读取。')
+    expect(pangu('中文 ，英文')).toBe('中文，英文')
+    expect(pangu('在2024年，Vue用Proxy。')).toBe('在 2024 年，Vue 用 Proxy。')
+    expect(pangu('函数foo()返回void。')).toBe('函数 foo() 返回 void。')
+  })
+
+  test('成对标点内侧不留空格', () => {
+    expect(pangu('「Proxy」是拦截器')).toBe('「Proxy」是拦截器')
+    expect(pangu('用 「 ref 」 包一层')).toBe('用「ref」包一层')
+    expect(pangu('「中文名字」很好')).toBe('「中文名字」很好')
+  })
+
+  test('全角括号外侧不留半角空格', () => {
+    expect(pangu('这是一段English (混合) 文本')).toBe('这是一段 English（混合）文本')
+    expect(pangu('把ref拆开看（它是class）会发现')).toBe('把 ref 拆开看（它是 class）会发现')
+    expect(pangu('中文（English）中文')).toBe('中文（English）中文')
+  })
+
   test('行内代码不参与中英文加空格', () => {
     expect(panguSegments('用 `Vue3` 做前端')).toBe('用 `Vue3` 做前端')
     expect(panguSegments('使用Vue开发')).toBe('使用 Vue 开发')
