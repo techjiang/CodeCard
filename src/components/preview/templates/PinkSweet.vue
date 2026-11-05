@@ -40,7 +40,7 @@ const pad = () => Math.round(props.style.size.width * 0.055)
           <circle cx="10%" cy="82%" r="7" />
           <circle cx="16%" cy="90%" r="4" />
         </g>
-        <path d="M86% 14% q 26 -22 40 4" fill="none" stroke="#FF9EC4" stroke-opacity="0.55" stroke-width="3" stroke-linecap="round" />
+        <path d="M86 14 q 26 -22 40 4" fill="none" stroke="#FF9EC4" stroke-opacity="0.55" stroke-width="3" stroke-linecap="round" />
       </svg>
     </template>
 
