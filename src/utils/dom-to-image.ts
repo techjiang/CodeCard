@@ -250,8 +250,13 @@ function isBreakSpace(ch: string): boolean {
   return ch === ' ' || ch === '\u200B'
 }
 
-/** 汉字与中文标点：它们之间任意位置都能断 */
-const CJK = /[\u2e80-\u9fff\u3000-\u303f\uff00-\uffef]/
+/**
+ * 汉字：汉字之间任意位置都能断。
+ *
+ * 范围和排版那边保持一致，只含汉字本体。把全角标点也算进来会让
+ * `汉)。` 里的 `)` 变成「像汉字一样可断」，进而影响行首标点判定。
+ */
+const CJK = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/
 
 /** 分隔符之后可以断：`a/b`、`a.b`、`a-b` 看着不断，实际浏览器也接受 */
 const BREAK_AFTER = '._/-'
@@ -263,6 +268,8 @@ function isBreakable(chars: string[], i: number): boolean {
   const after = chars[i]
   if (isBreakSpace(before) || isBreakSpace(after)) return true
   if (BREAK_AFTER.includes(before)) return true
+  // 汉字与任何东西相邻都能断（中英之间浏览器也确实允许断行）；
+  // 拉丁字母之间不行 —— 那样 `defineProperty` 会被从中间劈开
   return CJK.test(before) || CJK.test(after)
 }
 
@@ -288,14 +295,16 @@ const NO_LINE_START = '，。、；：？！）》」』】…—,.;:?!)]}'
  * 贪心断行：一行能塞多少塞多少，回退到最近的合法断点。
  * 只按宽度切的话会把词从中间劈开，导出的换行位置就和预览对不上。
  */
-function greedyLines(ctx: CanvasRenderingContext2D, text: string, limit: number): string[] {
+function greedyLines(ctx: CanvasRenderingContext2D, text: string, limit: number, spacing = 0): string[] {
   const chars = Array.from(text)
   const lines: string[] = []
+  // canvas 不认 letter-spacing，得自己补 —— 负字距漏算是会少排字的
+  const widthOf = (s: string) => ctx.measureText(s).width + spacing * Array.from(s).length
   let start = 0
   while (start < chars.length) {
     // 量整串前缀而不是逐字累加：字距、连字都会让单字宽度之和偏大
     let fit = start
-    while (fit < chars.length && ctx.measureText(chars.slice(start, fit + 1).join('')).width <= limit + 1) fit++
+    while (fit < chars.length && widthOf(chars.slice(start, fit + 1).join('')) <= limit + 1) fit++
     if (fit >= chars.length) {
       lines.push(chars.slice(start).join('').trim())
       break
@@ -336,33 +345,66 @@ function splitLines(
   if (typeof ctx.measureText !== 'function') return [text]
   applyFont(ctx, style)
 
-  // 容差必须容得下「少排一个字」：中文按整字取整，行末还剩不到一个字的宽度时
-  // 下一个字就排不进去，这一行自然比可用宽度短一截。按半个字宽算会把正常排版判成歪的。
-  const widestChar = Array.from(text).reduce((max, ch) => Math.max(max, ctx.measureText(ch).width), 0)
-  const tol = widestChar + 2
+  // canvas 不认 letter-spacing，浏览器认。标题常带 -0.01em 这种负字距，
+  // 一行几十个字就是十几像素的差 —— 量出来比行盒宽，判成「塞多了」，
+  // 于是收窄宽度重切，行数反而多出来，最后整段退回一行。
+  // 所以量字宽要自己把字距补上，量的才和浏览器排的是同一回事。
+  const spacing = px(style.letterSpacing)
+  const measure = (s: string) => ctx.measureText(s).width + (Number.isFinite(spacing) ? spacing * Array.from(s).length : 0)
+
   // 行数对不上时，逐行比宽没有意义（下标已经错位）
   const sameCount = !expectLines || lineBoxes.length === expectLines
   // 行盒给的是实际排出来的宽度：塞超过它，说明贪心多啃了一个字
   const overflowsBox = (lines: string[]) =>
     sameCount &&
     lines.length === lineBoxes.length &&
-    lineBoxes.some((box, i) => lines[i] !== undefined && ctx.measureText(lines[i]).width > box + 2)
+    lineBoxes.some((box, i) => lines[i] !== undefined && measure(lines[i]) > box + 2)
+  /**
+   * 断点干不干净：这一行确实装不下下一行的开头。
+   *
+   * 只看「多塞一个字就超宽」不够：`defineProperty` 是一整块不可断的拉丁词，
+   * 浏览器会把它整体挪到下一行，于是上一行空出一大截，而它的首字母 `d`
+   * 单塞进去又刚好塞得下 —— 按宽度判会认定「切歪了」，把好好的三行推翻重来。
+   *
+   * 所以还得看两件事：
+   * - 下一行开头是汉字：汉字之间可断，只有真的塞不下才算干净
+   * - 下一行开头是拉丁词：那就把整个词试进去，塞不下就说明浏览器也只能挪行
+   */
   const cleanEdges = (lines: string[]) =>
-    lines.slice(0, -1).every((line) => Math.abs(ctx.measureText(line).width - width) <= tol)
+    lines.slice(0, -1).every((line, i) => {
+      const rest = Array.from(lines[i + 1] ?? '')
+      const next = rest[0]
+      if (!next) return true
+      if (CJK.test(next) || isBreakSpace(next)) return measure(line + next) > width - 1
+      // 拉丁词：整词试，单词本身就超宽时按单字算
+      let word = ''
+      for (const ch of rest) {
+        if (CJK.test(ch) || isBreakSpace(ch)) break
+        word += ch
+      }
+      return measure(line + ' ' + word) > width - 1 || measure(line + next) > width - 1
+    })
 
   let limit = width
-  let lines = greedyLines(ctx, text, limit)
-  // 第一轮就该对上：行数一致、没超出行盒、除末行外都贴边
-  if ((!expectLines || lines.length === expectLines) && !overflowsBox(lines) && cleanEdges(lines)) return lines
+  let lines = greedyLines(ctx, text, limit, Number.isFinite(spacing) ? spacing : 0)
+  // 行数已经和浏览器对上，且没有哪一行超出它自己那条行盒 —— 就是它了。
+  //
+  // 这是最强的证据：浏览器把这段文字排成了几行、每行多宽，我们都照抄下来了。
+  // 再去「验证断点干不干净」只会把正确答案推翻 —— 浏览器本来就会为了不劈开
+  // 一个拉丁词而提前换行，那是它排出来的样子，不是我们切歪了。
+  if (expectLines && lines.length === expectLines && !overflowsBox(lines)) return lines
 
-  // 收窄到浏览器真排出来的最宽一行再切一次。行盒宽度是浏览器算出来的，
-  // 一定塞得下，用它当上限不会把行切得更碎，只是别再多啃一个字
+  // 行数对不上：收窄到浏览器真排出来的最宽一行再切一次
   const widest = Math.max(0, ...lineBoxes.slice(0, -1))
   if (widest > 0 && widest < limit) {
     limit = widest
-    lines = greedyLines(ctx, text, limit)
-    if ((!expectLines || lines.length === expectLines) && !overflowsBox(lines) && cleanEdges(lines)) return lines
+    lines = greedyLines(ctx, text, limit, Number.isFinite(spacing) ? spacing : 0)
+    if (lines.length === expectLines || (!expectLines && cleanEdges(lines))) return lines
+    if (expectLines && lines.length === expectLines) return lines
   }
+
+  // 实在对不上：不强制断行，交给下面的整段兜底
+  if (!expectLines && cleanEdges(lines)) return lines
   // 切不准就整段画：宁可出一行略宽，也不要断错位置
   return [text]
 }
@@ -516,6 +558,30 @@ function isInlineElement(el: HTMLElement, cs: CSSStyleDeclaration): boolean {
   return cs.display === 'inline' || cs.display === 'inline-block'
 }
 
+/**
+ * 自带排版结构的行内元素：公式里的分式、上下标、根式。
+ *
+ * 这类元素不能按「一段文字」画 —— 它里面的文字各有各的位置（分数线上下、
+ * 基线以下、根号里），拍成一行就全挤在一条基线上，导出图里的公式就成了
+ * `∂f∂x` 这种读不出意思的东西。必须逐个子节点按真实矩形画。
+ */
+function isStructuredInline(el: HTMLElement): boolean {
+  const cs = window.getComputedStyle(el)
+  const own = cs.display ?? ''
+  if (own.includes('flex') || own.includes('grid')) return true
+  for (const child of Array.from(el.children)) {
+    const childCs = window.getComputedStyle(child)
+    const display = childCs.display ?? ''
+    if (display.includes('flex') || display.includes('grid')) return true
+    const tag = child.tagName?.toUpperCase()
+    if (tag === 'SUP' || tag === 'SUB') return true
+    // 子孙里还有带边框的细线（分数线）
+    if (px(childCs.borderTopWidth) > 0 || px(childCs.borderBottomWidth) > 0) return true
+    if (isStructuredInline(child as HTMLElement)) return true
+  }
+  return false
+}
+
 /** 块里夹着行内元素（行内代码、加粗、链接） */
 function hasInlineBlock(el: HTMLElement): boolean {
   return Array.from(el.children).some((c) => isInlineElement(c as HTMLElement, window.getComputedStyle(c)))
@@ -591,16 +657,21 @@ function collectRuns(el: HTMLElement, rootRect: DOMRect, out: InlineRun[]): bool
     // 断点标记本身不占位
     if (tag === 'WBR') continue
     if (isInlineElement(node, cs)) {
+      // 公式这类自带结构的行内元素：交给 paintStructuredInline 逐个子节点画，
+      // 在这里收集成一段文本就会把它拍平（分式变一行、分数线消失）
+      if (isStructuredInline(node)) continue
       // 行内元素（行内代码、加粗、链接）自己带样式、带内边距，不能和散字混成一段画，
       // 否则整段用一个字体一个颜色，导出的图和预览对不上。
       // 元素里有块级子节点时继续往下递归，交还给下面的散字逻辑
       const rects = rangeRects(node)
       const text = (node.textContent ?? '').replace(/\s+/g, ' ')
       if (rects.length && text.trim()) {
-        // 跨行���每行一个矩形；文字按行盒宽度切开后逐行裁切绘制
+        // 跨行的元素每行一个矩形。第一行按整行可用宽度排（行盒是它自己那一截，
+        // 拿它当上限会把字排得太少），后续行按各自行盒的宽度续上。
         const kNode = totalScale(node)
-        const wrapWidth = Math.min(...rects.map((r) => r.width)) / kNode
-        const lines = splitLines(text, cs, wrapWidth, measureCtx(), rects.length)
+        const widths = rects.map((r) => r.width / kNode)
+        const wrapWidth = Math.max(...widths)
+        const lines = splitLines(text, cs, wrapWidth, measureCtx(), rects.length, widths)
         const boxes = rects
           .filter((rect) => rect.width > 0 && rect.height > 0)
           .map((rect) => ({
@@ -686,7 +757,66 @@ function resolveStyle(el: HTMLElement | undefined, fallback: CSSStyleDeclaration
   return px(fallback.fontSize) > 0 ? fallback : (live ?? fallback)
 }
 
+/**
+ * 行内元素的底与框：行内代码的灰底、下划线、左右内边距都长在元素自己身上。
+ *
+ * 这些属性不在文字上，光画字是画不出来的 —— 之前整段被拍平成一次 fillText，
+ * 连「行内代码有个底色」这件事都无从表达，导出图里代码和正文长得一模一样。
+ * 底色要压在文字下面，所以先画底、再画字。
+ */
+function paintInlineBoxes(ctx: CanvasRenderingContext2D, rows: InlineRun[][], scale: number) {
+  const seen = new Set<HTMLElement>()
+  for (const row of rows) {
+    for (const run of row) {
+      const el = run.el
+      if (!el || seen.has(el)) continue
+      seen.add(el)
+      const cs = window.getComputedStyle(el)
+      if (!cs) continue
+      // 只有行内元素才在这一层有「底」：块级的底色归 paintBackground，
+      // 在这里再画一遍会盖住整段正文（引用块就踩过这个）
+      if (!isInlineElement(el, cs)) continue
+      const hasBg = cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent'
+      const underline = (cs.textDecorationLine ?? '').includes('underline')
+      const border = hasVisibleBorder(cs)
+      if (!hasBg && !underline && !border) continue
+      // 一个元素跨几行就有几个背景块，得逐行画，不能拿整体包围盒一刀切
+      const boxes = run.rows?.length ? run.rows : run.boxes?.length ? run.boxes : [{ x: run.x, top: run.top, width: run.width, height: run.height }]
+      for (const box of boxes) {
+        const x = box.x * scale
+        const y = box.top * scale
+        const w = box.width * scale
+        const h = box.height * scale
+        if (w <= 0 || h <= 0) continue
+        if (hasBg) {
+          const radius = px(cs.borderTopLeftRadius) * scale
+          ctx.save()
+          ctx.globalAlpha = Math.max(0, Math.min(1, Number(cs.opacity === '' ? 1 : cs.opacity)))
+          ctx.fillStyle = cs.backgroundColor
+          if (radius > 0) {
+            ctx.beginPath()
+            roundRect(ctx, x, y, w, h, radius)
+            ctx.fill()
+          } else {
+            ctx.fillRect(x, y, w, h)
+          }
+          ctx.restore()
+        }
+        if (underline) {
+          const thickness = Math.max(1, px(cs.fontSize) * 0.055) * scale
+          ctx.save()
+          ctx.fillStyle = cs.color
+          ctx.globalAlpha = Math.max(0, Math.min(1, Number(cs.opacity === '' ? 1 : cs.opacity)))
+          ctx.fillRect(x, y + h - thickness * 1.6, w, thickness)
+          ctx.restore()
+        }
+      }
+    }
+  }
+}
+
 function paintRuns(ctx: CanvasRenderingContext2D, rows: InlineRun[][], scale: number) {
+  paintInlineBoxes(ctx, rows, scale)
   for (const row of rows) {
     const top = Math.min(...row.map((r) => r.top))
     const height = Math.max(...row.map((r) => r.height + (r.top - top)))
@@ -708,6 +838,49 @@ function paintRuns(ctx: CanvasRenderingContext2D, rows: InlineRun[][], scale: nu
       // 一段里排了多行：按它自己实测的行矩形逐行裁切绘制。
       // 断点稍有出入也不会糊到隔壁行，行距也对得上浏览器
       if (run.rows?.length) {
+        // 行盒比文字行多：跨行的行内元素（`Object.defineProperty` 这种被断成两半的）
+        // 只有一整段文字，却有两条行盒。这时按行盒的宽度把文字现切一遍，
+        // 否则后半段永远等不到自己的那行字，导出图上就空着。
+        // 行盒比文字行多时，按每条行盒装得下的字数把这段文字现切一遍。
+        //
+        // 不能对「剩下的文字」重新跑一遍断行：那样每段都会按自己的宽度重新贪心，
+        // 切出来的字会比原来小一号（`Object.defineProperty` 的第二行就是这么缩下去的）。
+        // 这里只做一件事：按行盒宽度把字一个一个挪进去。
+        let perRow: string[] = run.lines
+        if (run.lines.length !== run.rows.length) {
+          const k = run.el ? totalScale(run.el) || 1 : 1
+          const ctx2 = measureCtx()
+          if (ctx2) {
+            applyFont(ctx2, style)
+            const spacing = px(style.letterSpacing)
+            const widthOf = (t: string) => ctx2.measureText(t).width + (Number.isFinite(spacing) ? spacing * Array.from(t).length : 0)
+            const chars = Array.from(run.text)
+            const cut: string[] = []
+            let at = 0
+            for (const r of run.rows) {
+              const limit = r.width / k + 1
+              let end = at
+              while (end < chars.length && widthOf(chars.slice(at, end + 1).join('')) <= limit) end++
+              if (end === at) end = Math.min(at + 1, chars.length)
+              cut.push(chars.slice(at, end).join(''))
+              at = end
+            }
+            if (at >= chars.length) perRow = cut
+          }
+        }
+        if (perRow.length === run.rows.length) {
+          perRow.forEach((line, idx) => {
+            const row = run.rows![idx]
+            if (!line) return
+            ctx.save()
+            ctx.beginPath()
+            ctx.rect(row.x * scale, row.top * scale, (row.width + 2) * scale, row.height * scale)
+            ctx.clip()
+            ctx.fillText(upper ? line.toUpperCase() : line, row.x * scale, (row.top + row.height / 2) * scale)
+            ctx.restore()
+          })
+          continue
+        }
         run.rows.forEach((row, idx) => {
           const line = run.lines[idx] ?? ''
           if (!line) return
@@ -894,8 +1067,8 @@ function paintText(ctx: CanvasRenderingContext2D, el: HTMLElement, cs: CSSStyleD
   if (!text.trim()) return
 
   // 有真实行盒就照眼睛看到的样子画，量不到才退回逐字断行。
-  // trustLayout 是底线：一旦发现行盒不可信（块里散字被行内代码的零宽断点挤成碎片），
-  // 整块退回「自己按宽度断行」，宁可换行位置差一点，也不要排出乱码样的碎字
+  // collectRuns 的返回值表示「行盒是否可信」：块里散字被行内代码的零宽断点挤碎时它是 false。
+  // 不可信只说明换行位置要自己按宽度重排，不说明样式可以不要 —— 见下面的用法。
   // 先把这块的行宽量出来：散字自己算不出可用宽度（行内代码的零宽断点会把它们拆碎），
   // 只能拿这一块里最宽的那条行盒当基准。
   // 最宽的那条都填不满元素宽度时，说明这块是被断点拆碎的，只能按元素宽度重排
@@ -904,10 +1077,15 @@ function paintText(ctx: CanvasRenderingContext2D, el: HTMLElement, cs: CSSStyleD
   const measured = maxRowWidth(el) / totalScale(el) - px(cs.paddingLeft) - px(cs.paddingRight)
   blockRowWidth = boxWidth > 0 ? boxWidth : measured
   const runs: InlineRun[] = []
-  const trustLayout = collectRuns(el, rootRect, runs)
-  const rowCount = runs.reduce((n, r) => n + Math.max(1, r.lines.length), 0)
-  // 行盒既不可信、又没给出比「整段一行」更细的信息时，交给下面的逐字断行
-  if (runs.length && (trustLayout || rowCount > runs.length)) {
+  collectRuns(el, rootRect, runs)
+  // 收集到段就按段画。
+  //
+  // 曾经的判断是「行盒可信、或者段数多于行数」才走这里，否则整块退回逐字断行。
+  // 可逐字断行只认一个样式：段里夹着的 <strong>、行内代码全被拍平成正文灰，
+  // 加粗和代码底色在导出图里直接消失 —— 而它们恰恰是最常见的内容。
+  // 行盒不可信只影响「按哪条线断行」，paintRuns 里已经按 run.rows 逐行裁切，
+  // 不需要为此丢掉整段的样式。
+  if (runs.length) {
     paintRuns(ctx, groupRuns(runs), scale)
     return
   }
@@ -1004,6 +1182,49 @@ function clipRadiusOf(el: Element, rect: DOMRect): number {
   return 0
 }
 
+/**
+ * 画元素自己的直属文字节点。
+ *
+ * 容器元素既有直属文字、又有结构化行内子元素时（`<span>√<span>…</span></span>`），
+ * 递归只走 `children`，直属文字会被整个漏掉 —— 根号、上下标的底数就是这么丢的。
+ */
+function paintOwnTextNodes(
+  ctx: CanvasRenderingContext2D,
+  el: HTMLElement,
+  cs: CSSStyleDeclaration,
+  rootRect: DOMRect,
+  scale: number,
+) {
+  const fontSize = px(cs.fontSize) * scale
+  if (fontSize < 1) return
+  const k = totalScale(el)
+  for (const child of Array.from(el.childNodes)) {
+    if (child.nodeType !== Node.TEXT_NODE) continue
+    const text = (child.textContent ?? '').replace(/\s+/g, ' ')
+    if (!text.trim()) continue
+    const rects = rangeRects(child).filter((r) => r.width > 0 && r.height > 0)
+    if (!rects.length) continue
+    // 这段文字自己跨了行：按行盒宽度切开逐行画，别把整串重复画好几遍
+    const lines =
+      rects.length > 1 ? splitLines(text, cs, Math.min(...rects.map((r) => r.width)) / k, measureCtx(), rects.length) : [text]
+    ctx.save()
+    ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${fontSize}px ${cs.fontFamily}`
+    ctx.fillStyle = cs.color
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'middle'
+    rects.forEach((rect, i) => {
+      const line = lines[i] ?? (rects.length === 1 ? text : '')
+      if (!line) return
+      ctx.fillText(
+        line,
+        ((rect.left - rootRect.left) / k) * scale,
+        ((rect.top - rootRect.top + rect.height / 2) / k) * scale,
+      )
+    })
+    ctx.restore()
+  }
+}
+
 // ---------- 节点递归 ----------
 
 function paintNode(ctx: CanvasRenderingContext2D, el: Element, rootRect: DOMRect, rootCs: CSSStyleDeclaration, scale: number): void {
@@ -1019,7 +1240,10 @@ function paintNode(ctx: CanvasRenderingContext2D, el: Element, rootRect: DOMRect
   if (Number.isFinite(zoom) && zoom > 0 && zoom !== 1) zoomOf.set(html, zoom)
 
   const rect = html.getBoundingClientRect()
-  if (rect.width === 0 || rect.height === 0) return
+  // 高或宽为 0 的元素一般没内容可画，但分数线那种「零高度 + 上边框」是真实存在的，
+  // 一律跳过的话公式里那条横线就没了
+  const borderOnly = hasVisibleBorder(cs) && rect.width > 0
+  if (rect.width === 0 || (rect.height === 0 && !borderOnly)) return
 
   if (tag === 'SVG') {
     paintSvg(html as unknown as SVGSVGElement, rect, rootRect, scale)
@@ -1032,8 +1256,11 @@ function paintNode(ctx: CanvasRenderingContext2D, el: Element, rootRect: DOMRect
 
   // flex/grid 容器的子项不论标签类型都按块级处理
   const isLayout = cs.display === 'flex' || cs.display === 'inline-flex' || cs.display === 'grid' || cs.display === 'inline-grid'
+  // 结构化行内子元素（公式的分式、上下标、根式）也要逐个子节点画。
+  // 只看标签名会把 <span> 当纯文本，整块在 paintText 里被拍平成一串字。
+  const hasStructuredChild = Array.from(html.children).some((child) => isStructuredInline(child as HTMLElement))
   const hasBlockChildren =
-    isLayout || Array.from(html.children).some((child) => !INLINE_TAGS.has(child.tagName?.toUpperCase()))
+    isLayout || hasStructuredChild || Array.from(html.children).some((child) => !INLINE_TAGS.has(child.tagName?.toUpperCase()))
 
   ctx.save()
   // 只认自己的 opacity。祖先那份要是也乘下来，正文会跟着背景一起淡掉，
@@ -1048,6 +1275,8 @@ function paintNode(ctx: CanvasRenderingContext2D, el: Element, rootRect: DOMRect
     // 装饰的溢出交给它自己的圆角处理，见 paintSvg 里的 radius。
     if (bg) paintBackground(ctx, html, cs, rect, rootRect, scale)
     if (border) paintBorder(ctx, html, cs, rect, rootRect, scale)
+    // 直属文字先画：递归只走子元素，不先画掉它们就永远画不出来
+    paintOwnTextNodes(ctx, html, cs, rootRect, scale)
     for (const child of Array.from(html.children)) paintNode(ctx, child, rootRect, rootCs, scale)
     ctx.restore()
     return
@@ -1132,11 +1361,19 @@ export async function renderElementToCanvas(root: HTMLElement, options: RenderOp
   return canvas
 }
 
-export function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+export function canvasToBlob(
+  canvas: HTMLCanvasElement,
+  type = 'image/png',
+  quality?: number,
+): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (blob) resolve(blob)
-      else reject(new Error('导出失败，请重试'))
-    }, 'image/png')
+    canvas.toBlob(
+      (blob) => {
+        if (blob) resolve(blob)
+        else reject(new Error('导出失败，请重试'))
+      },
+      type,
+      quality,
+    )
   })
 }

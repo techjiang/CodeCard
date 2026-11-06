@@ -2,7 +2,7 @@
  * 极简 Markdown 渲染：段落、标题、列表、引用、代码块、行内样式。
  * 输出结构化块，模板自行决定样式，避免 v-html 带来的截图不确定性。
  */
-import { breakPoints, panguSegments } from './typography'
+import { breakPoints, normalizePunctuation, spaceUnits, type SpacedUnit } from './typography'
 
 export type InlineNode =
   | { type: 'text'; value: string }
@@ -19,28 +19,126 @@ export type BlockNode =
   | { type: 'code'; language: string; value: string }
   | { type: 'divider' }
 
+/** 行内标记：代码、加粗、斜体、链接 */
+const INLINE_RE = /(`[^`\n]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)|(\[[^\]]+\]\([^)]+\))/g
+
+interface Token {
+  node: InlineNode
+  /** 边界判定用的首尾字符（去掉标记符号之后） */
+  head: string
+  tail: string
+}
+
+/**
+ * 行内排版。
+ *
+ * 旧做法是先把整段跑一遍 pangu 再切标记，切出来的各段各自成节点 —— 标记符号
+ * 一去掉，`**Proxy**复写` 里的 `*` 就没了，补空格时看到的是 `y复`，判定成
+ * 「拉丁 + 汉字」，可那段文本已经切走了，空格补不出来。所以现在是先切标记，
+ * 再把「标记内容的首尾字符」当成一个整体单元参与边界判定。
+ */
 export function parseInline(raw: string, autoSpace = true): InlineNode[] {
-  // 先做中英文加空格，再标出长标识符的断行点（避免 Object.defineProperty 被劈开）
-  const spaced = autoSpace ? panguSegments(raw).trim() : raw
-  const text = spaced
-  const nodes: InlineNode[] = []
-  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)|(\[[^\]]+\]\([^)]+\))/g
+  const text = normalizePunctuation(raw)
+  const tokens: Token[] = []
   let last = 0
   let m: RegExpExecArray | null
-  while ((m = re.exec(text))) {
-    if (m.index > last) nodes.push({ type: 'text', value: breakPoints(text.slice(last, m.index)) })
+  INLINE_RE.lastIndex = 0
+  while ((m = INLINE_RE.exec(text))) {
+    if (m.index > last) pushText(tokens, text.slice(last, m.index))
     const token = m[0]
-    if (token.startsWith('`')) nodes.push({ type: 'code', value: token.slice(1, -1) })
-    else if (token.startsWith('**')) nodes.push({ type: 'strong', value: token.slice(2, -2) })
-    else if (token.startsWith('*')) nodes.push({ type: 'em', value: token.slice(1, -1) })
-    else {
+    if (token.startsWith('`')) {
+      const value = token.slice(1, -1)
+      tokens.push({ node: { type: 'code', value }, head: value[0], tail: value[value.length - 1] })
+    } else if (token.startsWith('**')) {
+      const value = token.slice(2, -2)
+      tokens.push({ node: { type: 'strong', value }, head: value[0], tail: value[value.length - 1] })
+    } else if (token.startsWith('*')) {
+      const value = token.slice(1, -1)
+      tokens.push({ node: { type: 'em', value }, head: value[0], tail: value[value.length - 1] })
+    } else {
       const link = /\[([^\]]+)\]\(([^)]+)\)/.exec(token)!
-      nodes.push({ type: 'link', value: link[1], href: link[2] })
+      tokens.push({ node: { type: 'link', value: link[1], href: link[2] }, head: link[1][0], tail: link[1][link[1].length - 1] })
     }
-    last = re.lastIndex
+    last = INLINE_RE.lastIndex
   }
-  if (last < text.length) nodes.push({ type: 'text', value: breakPoints(text.slice(last)) })
-  return nodes.filter((n) => n.type !== 'text' || n.value.trim() !== '' || n.value.includes(' '))
+  if (last < text.length) pushText(tokens, text.slice(last))
+
+  // 不加空格也要标断点：长标识符不能在中间被劈开，这与排版开关无关
+  if (!autoSpace) {
+    return tokens
+      .map((t) => (t.node.type === 'text' ? { type: 'text' as const, value: breakPoints(t.node.value) } : t.node))
+      .filter((n) => n.type !== 'text' || n.value !== '')
+  }
+
+  // 每个 token 展开成排版单元：文本逐字符，标记内容整块不拆
+  const units: SpacedUnit[] = []
+  tokens.forEach((token, i) => {
+    if (token.node.type === 'text') {
+      for (const ch of token.node.value) units.push({ text: ch, tok: i })
+    } else {
+      units.push({ text: token.node.value, opaque: true, head: token.head, tail: token.tail, tok: i })
+    }
+  })
+
+  const placed = spaceUnits(units)
+  // 按 token 聚回去。
+  //
+  // 补出来的空格记在 tok = -1 上：它不属于任何一个原节点，位置却在节点边界之间。
+  // 前面是文本就并进那段文本，前面是行内代码/加粗就单独成一个只含空格的文本节点 ——
+  // 丢掉它的话 `参见 [文档]` 会变成 `参见文档`，`**Proxy**复写了` 会变成 `Proxy复写了`。
+  const out: InlineNode[] = []
+  let cur = -1
+  let buffer = ''
+  const flush = () => {
+    if (buffer) out.push({ type: 'text', value: breakPoints(buffer) })
+    buffer = ''
+  }
+  const pushRaw = (value: string) => {
+    const tail = out[out.length - 1]
+    if (tail && tail.type === 'text') tail.value += value
+    else out.push({ type: 'text', value })
+  }
+  for (const unit of placed) {
+    const tok = unit.tok ?? -1
+    if (tok < 0) {
+      if (buffer) buffer += unit.text
+      else pushRaw(unit.text)
+      continue
+    }
+    if (tok !== cur) {
+      flush()
+      cur = tok
+    }
+    const node = tokens[tok].node
+    if (node.type === 'text') buffer += unit.text
+    else {
+      flush()
+      out.push(node)
+    }
+  }
+  flush()
+  // 首尾的空格没有意义，导出时还会多画一段空白
+  const trimmed = out.map((n, i, arr) => {
+    if (n.type !== 'text') return n
+    let v = n.value
+    if (i === 0) v = v.replace(/^ +/, '')
+    if (i === arr.length - 1) v = v.replace(/ +$/, '')
+    return { type: 'text' as const, value: v }
+  })
+  // 相邻文本节点合起来：渲染时少一层 span，导出时也少几段
+  const merged: InlineNode[] = []
+  for (const node of trimmed) {
+    const tail = merged[merged.length - 1]
+    if (node.type === 'text' && tail?.type === 'text') tail.value += node.value
+    else merged.push(node)
+  }
+  return merged.filter((n) => n.type !== 'text' || n.value !== '')
+}
+
+function pushText(tokens: Token[], value: string) {
+  if (!value) return
+  // 一段纯文本也可能夹着需要保留的边界字符，整段当一个 token
+  tokens.push({ node: { type: 'text', value }, head: value[0], tail: value[value.length - 1] })
 }
 
 export function parseMarkdown(src: string, autoSpace = true): BlockNode[] {

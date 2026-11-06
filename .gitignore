@@ -8,3 +8,7 @@ coverage
 tsconfig.tsbuildinfo
 *.tsbuildinfo
 tests/e2e/.artifacts
+
+# 发布产物
+dist-standalone
+release

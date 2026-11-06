@@ -80,3 +80,32 @@ describe('中文断行', () => {
     expect(markdownToPlain('- 一\n- 二\n\n```\nconst a = 1\n```')).toBe('一 二\nconst a = 1')
   })
 })
+
+describe('行内拼接：中英文之间该有空格的地方必须有', () => {
+  const text = (s: string) =>
+    parseInline(s)
+      .map((n) => n.value)
+      .join('')
+      // 断点用 \n 标出来，渲染成零宽空格；比较可见文本时先抹掉
+      .replace(/\n/g, '')
+
+  test('加粗词紧跟中文，空格补在边界上而不是塞进节点里', () => {
+    expect(text('Vue 3 用 **Proxy**替代了属性拦截')).toBe('Vue 3 用 Proxy 替代了属性拦截')
+  })
+
+  test('行内代码紧跟中文也补空格', () => {
+    expect(text('读取时把副作用函数塞进 `dep` 里')).toBe('读取时把副作用函数塞进 dep 里')
+  })
+
+  test('行内代码后接全角标点，不补空格', () => {
+    expect(text('用 `Proxy`，替代 defineProperty')).toBe('用 Proxy，替代 defineProperty')
+  })
+
+  test('加粗里外都是中文，不插空格', () => {
+    expect(text('可以拦截属性的**读取**和**赋值**')).toBe('可以拦截属性的读取和赋值')
+  })
+
+  test('英文加粗前后是英文，靠原有空格分开', () => {
+    expect(text('use **ref** and **computed** here')).toBe('use ref and computed here')
+  })
+})

@@ -39,7 +39,7 @@ const pad = () => Math.round(props.style.size.width * 0.058)
         </defs>
         <rect width="100%" height="100%" fill="url(#fg-leaf)" />
         <rect width="100%" height="100%" fill="url(#fg-b)" />
-        <path d="M0 100% Q 40% 74% 100% 96%" fill="#000" fill-opacity="0.12" />
+        <path d="M0 1080 Q 432 799 1080 1037" fill="#000" fill-opacity="0.12" />
       </svg>
     </template>
 

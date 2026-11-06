@@ -151,47 +151,71 @@ export function useAutoFit(root: Ref<HTMLElement | null>, deps: () => unknown) {
     return true
   }
 
+  /** 把 scale 设到 g，等 DOM 更新后判断放不放得下 */
+  async function tryScale(node: HTMLElement, g: number, target: number): Promise<boolean> {
+    scale.value = g
+    await nextTick()
+    return fits(node, target)
+  }
+
+
   /**
-   * 第一遍按比例缩到刚好放下（缩太慢时逐档试缩兜底）；
-   * 第二遍内容太短就等比放大，别让竖版空着半张卡。
+   * 二分找「还放得下」的最大档位。
+   *
+   * 这里必须二分，不能按比例一次估完就收：缩小字号同时会让行数减少，
+   * 高度对字号是**超线性**的 —— 内容高 1512、版心 482，按比例该缩到 0.30，
+   * 而 0.30 下实际只有 286 高，连六成都不到。旧实现到这一步就返回了，
+   * 于是字被缩到 10px、底下空出一大片。往上补回来才是正解。
+   */
+  async function largestFitting(node: HTMLElement, lo: number, hi: number, target: number): Promise<number> {
+    // lo 已知放得下、hi 已知放不下，收敛到 0.01 的刻度就够（字号是整数字号，再细没意义）
+    for (let i = 0; i < MAX_STEPS; i++) {
+      if (hi - lo <= 0.01) break
+      const mid = Math.round(((lo + hi) / 2) * 100) / 100
+      if (mid <= lo || mid >= hi) break
+      if (await tryScale(node, mid, target)) lo = mid
+      else hi = mid
+    }
+    scale.value = lo
+    await nextTick()
+    return lo
+  }
+
+  /**
+   * 内容放不下：找到还放得下的最大档位，字别缩得比需要的更小、
+   * 底下的空白也别留得比需要的更多。内容不满一屏则反过来往上放大。
    */
   async function measure() {
-    const el = root.value
-    if (!el || el.clientHeight === 0) return
+    const target0 = root.value
+    if (!target0 || target0.clientHeight === 0) return
 
     scale.value = 1
     await nextTick()
 
-    const target = visibleCourt(el)
-    const base = naturalTotal(el)
+    const target = visibleCourt(target0)
+    const base = naturalTotal(target0)
     if (base > target + 1) {
-      // 高度随字号单调增长，按比例缩通常一两次就到位。
-      // 留 6% 余量：断行按整字取整、行末标点还挂在行盒外，估出来的高度总是偏乐观。
-      let g = clamp((target / base) * 0.94)
-      // 兜底逐档往下试：断行不是严格线性的，有的档位缩 2% 不降行，再缩 2% 就整整少一行。
-      for (let i = 0; i <= MAX_STEPS * 4; i++) {
-        scale.value = g
-        await nextTick()
-        if (fits(el, target)) return settleBalance()
-        if (g <= MIN_SCALE) return settleBalance()
-        // 差得多就直接按真实高度比跳过去，别一档一档挪
-        const cur = naturalTotal(el)
-        const ratio = cur > target * 1.15 ? Math.max(0.7, Math.min(0.97, target / cur)) : 1
-        g = Math.max(MIN_SCALE, Math.round((g * ratio - 0.02) * 100) / 100)
+      // 先按比例估一个起点（高度随字号单调增，估个八九不离十能少几轮）
+      const guess = clamp((target / base) * 0.94)
+      if (await tryScale(target0, guess, target)) {
+        await largestFitting(target0, guess, 1, target)
+      } else if (guess > MIN_SCALE) {
+        await largestFitting(target0, MIN_SCALE, guess, target)
       }
+      // 缩到下限仍放不下：就停在下限，交给模板按 balance 决定往哪边倾倒
       return settleBalance()
     }
 
     // 内容不满一屏：先按高度和行宽估一个放大上限，再从这一档往下试，
     // 找到第一个「放得下且断行干净」的档位 —— 中文断行是浏览器贪心算的，
     // 标点会不会掉行首只跟具体字号有关，只能逐档实测。
-    const max = clamp(Math.round(Math.min(target / base, charLimit(el)) * 0.97 * 100) / 100)
+    const max = clamp(Math.round(Math.min(target / base, charLimit(target0)) * 0.97 * 100) / 100)
     let safe = 1
     for (let g = max; g > 1.001; g = Math.round((g - 0.02) * 100) / 100) {
       scale.value = g
       await nextTick()
-      if (!fits(el, target)) continue
-      if (!hasBadBreak(el)) {
+      if (!fits(target0, target)) continue
+      if (!hasBadBreak(target0)) {
         await settleBalance()
         return
       }
