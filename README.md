@@ -8,7 +8,7 @@
 
 12 套模板 · 6 套代码高亮主题 · 中文排版自动优化 · 导出高清 PNG
 
-打开即用，不登录、不上传、不加任何水印
+一个文件双击就用，不登录、不上传、不加任何水印
 
 </div>
 
@@ -16,7 +16,7 @@
 
 ## 特性
 
-- **四种卡片类型**：知识卡片（Markdown）、代码片段（高亮）、命令行输出、数学公式、名言金句
+- **六种卡片类型**：知识卡片（Markdown）、代码片段（高亮）、命令行输出、数学公式、名言金句、自定义
 - **12 套模板**：终端黑、极客蓝、极简白、VS Code、渐变紫、粉色甜心、森林绿、星空夜、杂志风、海报风、手写风、现代简约
 - **六套高亮主题**：One Dark、Monokai、GitHub Light、Dracula、Solarized、Nord
 - **中文排版**：中英文之间自动加空格、全角标点统一、代码里的中文注释正常渲染
@@ -24,16 +24,33 @@
 - **三种尺寸**：正方形 1080×1080、横版 1200×630、竖版 1080×1920
 - **纯本地**：所有数据留在浏览器 localStorage，不联网、不上传
 
+## 直接用
+
+不想装环境的话，拿 Release 里的 `codecard-1.0.0.html`，双击打开就能用 —— 一个文件、223KB、零请求。
+
+它和开发时的页面是同一份代码，只是预先内联成单文件：脚本、样式、图标全在里面，`file://` 下也没有任何跨域请求可被拦。
+
 ## 快速开始
 
 ```bash
 npm install
-npm run dev        # 开发
-npm run build      # 生产构建
-npm run test       # 单元测试（jsdom）
-npm run test:e2e   # 浏览器端 E2E（真实 Chromium，首次需 npx playwright install chromium）
-npm run typecheck # 类型检查
+npm run dev              # 开发
+npm run build            # 生产构建（静态站点，dist/）
+npm run build:standalone # 单文件构建（dist-standalone/index.html）
+npm run check:standalone # 用真实 Chromium 以 file:// 打开单文件产物验收
+npm run release          # 两种构建 + 验收 + 打包到 release/
+npm run test             # 单元测试（jsdom）
+npm run test:e2e         # 浏览器端 E2E（真实 Chromium，首次需 npx playwright install chromium）
+npm run typecheck        # 类型检查
 ```
+
+### 为什么有两个 build
+
+`npm run build` 产出 ESM + 按需加载的模板 chunk，也就是常规静态站点，适合挂服务器。
+
+但它**不能双击打开**：`file://` 下 module 脚本按 CORS 取，origin 是 `null`，浏览器一律拒绝，白屏。
+
+`npm run build:standalone` 换成 IIFE、动态 import 内联、资源全塞进 HTML，才有「一个文件、双击可用」。两条产物在 CI 里都验，`check:standalone` 那条会真的用 Chromium 打开 `file://` 并导出一次。
 
 ## 模板一览
 
@@ -75,8 +92,8 @@ npm run typecheck # 类型检查
 | 样式 | Tailwind CSS 3 | 设计令牌走 `tailwind.config.ts` |
 | 导出 | 自研 DOM → Canvas | 不走 html2canvas，体积小、结果可预测 |
 | 高亮 | 手写分词器 | 按行输出 token，行号对齐稳、截图不抖 |
-| 测试 | Vitest + jsdom | 222 个用例 |
-| E2E | Vitest + Playwright | 33 个浏览器用例 |
+| 测试 | Vitest + jsdom | 227 个用例 |
+| E2E | Vitest + Playwright | 37 个浏览器用例 |
 
 ### 为什么不用 html2canvas
 
@@ -142,8 +159,8 @@ src/
 
 两层，各管一段：
 
-- **`npm run test`** —— jsdom 里的单元测试，222 个用例。导出渲染器的绘制逻辑靠伪造 `getBoundingClientRect` + 假 Canvas 上下文录调用断言
-- **`npm run test:e2e`** —— 真实 Chromium，33 个用例。自适应缩放、导出像素、圆角/透明度/水印、中文断行这些**依赖真实排版和真实画布**的东西只能在这里验，jsdom 里 `measureText` 恒返回 0，测出来是自欺欺人
+- **`npm run test`** —— jsdom 里的单元测试，227 个用例。导出渲染器的绘制逻辑靠伪造 `getBoundingClientRect` + 假 Canvas 上下文录调用断言
+- **`npm run test:e2e`** —— 真实 Chromium，37 个用例。自适应缩放、导出像素、圆角/透明度/水印、中文断行这些**依赖真实排版和真实画布**的东西只能在这里验，jsdom 里 `measureText` 恒返回 0，测出来是自欺欺人
 
 单测覆盖：导出渲染器（渐变坐标换算、圆角裁剪、边框内缩、换行与对齐、flex 子项不粘连、缩放折算、SVG 装饰加载失败兜底）、12 套模板 × 6 种卡片类型全组合渲染、预览容器自动缩放比例与重测量。
 
@@ -211,8 +228,12 @@ E2E 覆盖：**SVG 路径全部有几何长度且装饰真的进了导出图、�
 
 `src/utils/typography.ts` 只有两条规则，都由「两个相邻字符是什么」决定：
 
-- `needsGap(a, b)` —— 拉丁字母与汉字相邻时补一个空格
-- `keepSpace(a, b)` —— 原文里已有的空格，两侧都是非汉字时保留
+- `needsGap(a, b)` —— 拉丁「词」与汉字相邻时补一个空格
+- `keepSpace(a, b)` —— 原文里已有的空格要不要留
+
+第二条的原则是**用户敲的空格默认是对的**：只有半角括号紧贴汉字（`函数 )`）这种规则说得清的地方才收。旧实现反过来，只要有一侧是汉字、`needsGap` 又没判定要补，就一律收掉 —— `100% 以上`、`C++ 和`、`Hello, 世界` 里的空格全被吃掉，一句话里同一个词还能排出两种样子。
+
+「拉丁词」的边界也不能只看 `[A-Za-z0-9]`。`%` `+` 是收尾符（`100%`、`C++`），`$` `#` `@` 是开头符（`$10`、`#1`、`@user`），两者混成一个字符集会排出 `# 标签`，所以要分开定义。
 
 剩下的交给 `spaceUnits()`：所有内容先展开成「排版单元」流（普通文字逐字符，行内代码/加粗/链接整块不拆），逐个单元判定边界，连续空白压成一个，首尾空格去掉。
 

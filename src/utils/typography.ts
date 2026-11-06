@@ -27,9 +27,25 @@ const MARK = '\u3001\u3002\uff0c\uff1b\uff1a\uff1f\uff01\u2026\u2014'
 const ASCII_CLOSE = ')\]}'
 
 const HAN_RE = new RegExp(`[${HAN}]`)
-const LATIN_RE = /[A-Za-z0-9]/
-/** ASCII 标点：`foo, bar`、`a = 1` 里的空格是排版的一部分，不能收 */
-const ASCII_PUNCT_RE = /[!-/:-@[-`{-~]/
+
+/**
+ * 「拉丁词」的两个边界方向要分开看，因为有些符号只能收尾、不能开头。
+ *
+ * - `%` `+` 收尾：`100%`、`C++` 是一个词，后面接汉字时该隔开，原有空格也不能收
+ * - `$` `#` `@` 开头：`$10`、`#1`、`@user` 是一个词，前面接汉字时该隔开
+ *
+ * 混成一个字符集会排出 `# 标签`（把话题标签拆成井号 + 空格 + 词），所以得分开。
+ */
+const LATIN_TAIL_RE = /[A-Za-z0-9%+]/
+const LATIN_HEAD_RE = /[A-Za-z0-9$#@]/
+/**
+ * 紧贴文字的半角括号与引号：`函数 )`、`( 参数` 里的空白该收回。
+ *
+ * 只认括号和引号，不认 `%` `+` `#` 这类运算符 —— 那些是词的一部分，
+ * 收掉空格就把 `100% 以上` 粘成 `100%以上`，还补不回来。
+ */
+const ASCII_OPEN = '([{'
+const ASCII_CLOSE_TIGHT = ')]}\'"`'
 
 function has(set: string, ch: string): boolean {
   return !!ch && set.includes(ch)
@@ -44,8 +60,8 @@ export function needsGap(left: string, right: string): boolean {
   if (has(WIDE_PAIR, left) || has(WIDE_PAIR, right)) return false
   // 成对标点内侧：`「 Proxy 」` 是错的
   if (has(PAIR_OPEN, left) || has(PAIR_CLOSE, right)) return false
-  const leftLatin = LATIN_RE.test(left)
-  const rightLatin = LATIN_RE.test(right)
+  const leftLatin = LATIN_TAIL_RE.test(left)
+  const rightLatin = LATIN_HEAD_RE.test(right)
   const leftHan = HAN_RE.test(left)
   const rightHan = HAN_RE.test(right)
   // 汉字 ↔ 拉丁
@@ -58,21 +74,27 @@ export function needsGap(left: string, right: string): boolean {
   return false
 }
 
-/** 一处已经存在的空格要不要留下 */
+/**
+ * 一处已经存在的空格要不要留下。
+ *
+ * 原则是「用户敲的空格默认是对的」，只有规则能说清哪里错才收。
+ *
+ * 旧实现反过来：只要有一侧是汉字，而 `needsGap` 又没判定要补，就一律收掉。
+ * 于是 `100% 以上`、`C++ 和`、`Hello, 世界`、`第 3 章 #1` 里的空格全被吃掉 ——
+ * 那些空格不是多余，是词与词的边界。
+ */
 function keepSpace(left: string, right: string): boolean {
   if (!left || !right) return false
   if (needsGap(left, right)) return true
   // 标点、全角括号、成对标点内侧：一律收回
   if (has(MARK, left) || has(MARK, right)) return false
   if (has(WIDE_PAIR, left) || has(WIDE_PAIR, right)) return false
-  if (has(PAIR_OPEN, left) || has(PAIR_CLOSE, right)) return false
-  // ASCII 标点与拉丁文本之间是正常间距（`foo, bar`、`a = 1`），留着；
-  // 但挨着汉字的（`汉 )`）还是收回
-  const leftAsciiPunct = ASCII_PUNCT_RE.test(left)
-  const rightAsciiPunct = ASCII_PUNCT_RE.test(right)
-  if ((leftAsciiPunct && !HAN_RE.test(right)) || (rightAsciiPunct && !HAN_RE.test(left))) return true
-  // 汉字与任何东西之间：要么上面已经判定该补，要么就不该有
-  if (HAN_RE.test(left) || HAN_RE.test(right)) return false
+  // 成对标点：内侧（`「 ref`、`ref 」`）和外侧贴汉字（`用 「ref」`）都不留空白，
+  // 只有外侧挨着拉丁文本时才该隔开 —— 那种情况上一行的 needsGap 已经放行了
+  if (has(PAIR_OPEN, left) || has(PAIR_OPEN, right) || has(PAIR_CLOSE, left) || has(PAIR_CLOSE, right)) return false
+  // 半角括号紧贴汉字：`函数 )`、`( 参数` 两侧的空白收回
+  if (HAN_RE.test(left) && has(ASCII_CLOSE_TIGHT, right)) return false
+  if (has(ASCII_OPEN, left) && HAN_RE.test(right)) return false
   return true
 }
 
@@ -205,12 +227,21 @@ function normalizePunctuationPreservingCode(text: string): string {
 /**
  * 长标识符断行点：优先在 . _ / 之后断，别把单词从中间劈开。
  * 输出纯文本，渲染时需按 \n 转成断点。
+ *
+ * **数字里的点不是分隔符。** `99.9999`、`v1.2.0`、`192.168.0.1` 按「点后断开」
+ * 处理会变成两个数：导出图上 `99.9999` 折行成 `99.` + `9999`，读起来就是另一个值。
+ * 早期版本就是这么排的，而且只在窄卡片上才现形。
  */
 export function breakPoints(text: string): string {
+  /** 两侧都是数字：中间那个点是小数点，不是分隔符 */
+  const decimal = (left: string, right: string) => /\d/.test(left) && /\d/.test(right)
   return (
     text
       // 分隔符之后：Object.defineProperty → Object. | defineProperty
-      .replace(/([A-Za-z0-9])([._/])(?=[A-Za-z0-9])/g, '$1$2\n')
+      .replace(/([A-Za-z0-9])([._/])(?=[A-Za-z0-9])/g, (match, left: string, sep: string, offset: number, whole: string) => {
+        const right = whole[offset + 2] ?? ''
+        return decimal(left, right) ? match : `${left}${sep}\n`
+      })
       // 驼峰：defineProperty → define | Property
       .replace(/([a-z0-9])(?=[A-Z][a-z])/g, '$1\n')
   )

@@ -11,6 +11,10 @@ main:
             - dist
         - name: e2e
           script: npx playwright install --with-deps chromium && npm run test:e2e
+        # 单文件产物单独验：默认构建是 ESM + 外链，file:// 打不开，
+        # 「双击可用」这条承诺只能靠这份配置兑现
+        - name: standalone
+          script: npx playwright install --with-deps chromium && npm run build:standalone && npm run check:standalone
 
 $:
   pull_request:
@@ -23,3 +27,5 @@ $:
           script: npm run typecheck && npm run test && npm run build
         - name: e2e
           script: npx playwright install --with-deps chromium && npm run test:e2e
+        - name: standalone
+          script: npx playwright install --with-deps chromium && npm run build:standalone && npm run check:standalone

@@ -80,6 +80,23 @@ describe('Chinese Typography', () => {
     expect(textParts(breakPoints('普通文本'))).toEqual(['普通文本'])
   })
 
+  /**
+   * 数字里的点不是分隔符。
+   * 旧实现按「点后断开」一律处理，`99.9999` 在窄卡片上折成 `99.` + `9999`，
+   * 读起来就是另一个值 —— 导出图上真的这么排过。
+   */
+  test('小数、版本号、IP 不从小数点断开', () => {
+    for (const value of ['99.9999', 'v1.2.0', '3.14159', '192.168.0.1', '2026.11.06', '1,000.50', '99.9%']) {
+      expect(breakParts(breakPoints(value)), value).toEqual([value])
+    }
+  })
+
+  test('标识符仍按语义边界断', () => {
+    expect(breakParts(breakPoints('Object.defineProperty'))).toEqual(['Object.', 'define', 'Property'])
+    expect(breakParts(breakPoints('README.md'))).toEqual(['README.', 'md'])
+    expect(breakParts(breakPoints('path/to/file.ts'))).toEqual(['path/', 'to/', 'file.', 'ts'])
+  })
+
   test('断点用零宽空格，片段比整行宽时浏览器也会先在这里断', () => {
     expect(breakParts(breakPoints('Object.defineProperty'))).toEqual(['Object.', 'define', 'Property'])
     // 零宽空格是不可见字符，但必须是真实字符（<wbr> 兜不住超宽片段）
@@ -172,6 +189,40 @@ describe('排版不变量：不该有空格的地方不能有', () => {
     }
     // 成对半角括号夹中文仍会规整成全角
     expect(pangu('(汉字)。')).toBe('（汉字）。')
+  })
+
+  /**
+   * 旧实现只要「有一侧是汉字、needsGap 又没判定要补」就收空格，
+   * 于是 `100% 以上` 被粘成 `100%以上`。这些空格不是多余，是词与词的边界。
+   */
+  test('拉丁词与汉字之间的空格不会被收走', () => {
+    for (const [input, expected] of [
+      ['完成度 100% 以上', '完成度 100% 以上'],
+      ['可用率 99.9% 的服务', '可用率 99.9% 的服务'],
+      ['C++ 和 C# 都是语言', 'C++ 和 C# 都是语言'],
+      ['价格 $10 一件', '价格 $10 一件'],
+      ['第 3 章 #1 小节', '第 3 章 #1 小节'],
+      ['Hello, 世界!', 'Hello, 世界！'],
+      ['这是 Vue, 也是 React', '这是 Vue, 也是 React'],
+      ['耗时 200ms，占比 40% 左右', '耗时 200ms，占比 40% 左右'],
+      ['a = 1 的情况', 'a = 1 的情况'],
+    ] as const) {
+      expect(panguSegments(input), input).toBe(expected)
+    }
+  })
+
+  test('同一句话里同一个词只有一种排法', () => {
+    // 旧实现：有空格的地方收走、没空格的地方补上，一句话里排出两种样子
+    expect(panguSegments('100% 以上')).toBe(panguSegments('100%以上'))
+    expect(panguSegments('C++ 和')).toBe(panguSegments('C++和'))
+  })
+
+  test('半角括号贴汉字时该收回空白', () => {
+    expect(panguSegments('函数 ) 的参数')).toBe('函数) 的参数')
+    // 括号内侧的空白收回，外侧与汉字之间的空格留着（那是词边界）
+    expect(panguSegments('调用 ( 参数 ) 时')).toBe('调用 (参数) 时')
+    // 半角括号里的拉丁文本仍按正常间距排
+    expect(panguSegments('读取 (x) 的值')).toBe('读取 (x) 的值')
   })
 
   test('首尾不留空格', () => {
