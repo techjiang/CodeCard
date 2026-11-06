@@ -94,6 +94,53 @@ describe('自适应缩放', () => {
     expect(broken).toEqual([])
   }, 60_000)
 
+  /**
+   * 填不满就是字太小。
+   *
+   * 旧实现在「缩到能放下」的第一档就收手，横版六段只用到 59% 的版心高度，
+   * 字号 11px —— 卡片看着像被缩印过。二分补回来之后应当稳定在 85% 以上。
+   *
+   * 段落长短要错开：等长段落会在某个字号上「全体同时换行」，字号是整数，
+   * 跨不过去的那一档只能留白，那是量化瓶颈不是算法问题。
+   *
+   * 一段话不进这条 —— 它会被「每行至少 16 字」挡住，宁可留白也不排成一列字。
+   */
+  test('内容放下之后还会往上补，版心利用率不低于 85%', async () => {
+    const page = await openApp()
+    const vars = (n: number) =>
+      Array.from({ length: n }, (_, i) => `第 ${i + 1} 段：${longProse(1).slice(0, 20 + i * 13)}`).join('\n\n')
+    for (const n of [2, 4, 6, 10]) {
+      await seedCard(page, { type: 'knowledge', title: '填充率', content: vars(n) })
+      await pickSize(page, 'landscape')
+      await settle(page)
+      const used = await page.evaluate(() => {
+        const content = document.querySelector<HTMLElement>('.cc-content')!
+        const box = content.getBoundingClientRect()
+        const range = document.createRange()
+        range.selectNodeContents(content)
+        const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0 && r.height > 0)
+        if (!rects.length) return 0
+        const top = rects.reduce((m, r) => Math.min(m, r.top), Number.POSITIVE_INFINITY)
+        const bottom = rects.reduce((m, r) => Math.max(m, r.bottom), 0)
+        // 版心高度里真正被字占了多少
+        return (box.height - Math.max(0, top - box.top) - Math.max(0, box.bottom - bottom)) / box.height
+      })
+      expect(used, `${n} 段只用了 ${(used * 100).toFixed(0)}%`).toBeGreaterThan(0.85)
+    }
+  }, 120_000)
+
+  test('等长段落遇到字号量化瓶颈时也不溢出', async () => {
+    // 六段等长：13px 各行一行、14px 全体换两行，中间没有可用档位，只能留白 ——
+    // 但绝不允许为了填满而撑出卡片。
+    const page = await openApp()
+    await seedCard(page, { type: 'knowledge', title: '量化', content: longProse(6) })
+    await pickSize(page, 'landscape')
+    await settle(page)
+    const m = await readMetrics(page)
+    expect(m.contentScrollHeight).toBeLessThanOrEqual(m.contentClientHeight + 2)
+    expect(m.overflowLines).toBe(0)
+  }, 60_000)
+
   test('改内容后自适应会重新收敛，不会停在上一档', async () => {
     const page = await openApp()
     await seedCard(page, { type: 'knowledge', title: '收敛', content: '短句。' })

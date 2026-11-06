@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { ZWSP, breakParts, breakPoints, normalizePunctuation, pangu, panguSegments, spaceCJK, textParts } from '@/utils/typography'
+import { ZWSP, breakParts, breakPoints, normalizePunctuation, pangu, panguSegments, spaceCJK, spaceUnits, textParts } from '@/utils/typography'
 
 describe('Chinese Typography', () => {
   test('中英文之间自动加空格', () => {
@@ -85,5 +85,124 @@ describe('Chinese Typography', () => {
     // 零宽空格是不可见字符，但必须是真实字符（<wbr> 兜不住超宽片段）
     expect(ZWSP).toBe('\u200B')
     expect(ZWSP).toHaveLength(1)
+  })
+})
+
+/**
+ * 排版最容易错的地方不是「该加的没加」，而是「不该加的加了」：
+ * 中文标点被当成汉字，于是 `汉)。` 变成 `汉) 。`。
+ * 这里把字符类两两组合穷举，把不变量钉死。
+ */
+describe('排版不变量：不该有空格的地方不能有', () => {
+  /** 覆盖汉字、拉丁、数字、全角标点、半角标点、括号、引号、行内代码片段 */
+  const SAMPLES = [
+    '汉',
+    'A',
+    '3',
+    '。',
+    '，',
+    '、',
+    '：',
+    '；',
+    '？',
+    '！',
+    '（',
+    '）',
+    '“',
+    '”',
+    '《',
+    '》',
+    '·',
+    '.',
+    ',',
+    ')',
+    '(',
+    '"',
+    "'",
+    '-',
+    '+',
+    '=',
+    '/',
+    '%',
+    '#',
+    '@',
+    '$',
+  ]
+
+  /** 断点标记 \n 与零宽空格不算可见空格 */
+  const visible = (s: string) => s.replace(/[\n\u200b\u00a0]/g, '')
+
+  test('标点前不留空格，标点后不乱加空格', () => {
+    const bad: string[] = []
+    for (const a of SAMPLES) {
+      for (const b of SAMPLES) {
+        const out = visible(pangu(a + b))
+        // 全角标点左边不该有空格
+        if ('。，、：；？！）》”'.includes(b) && out !== a + b) bad.push(`[${a}${b}] → [${out}]`)
+        // 前括号 / 前引号右边不该有空格
+        if ('（《“'.includes(a) && out !== a + b) bad.push(`[${a}${b}] → [${out}]`)
+      }
+    }
+    expect(bad).toEqual([])
+  })
+
+  test('不会出现连续两个空格', () => {
+    const bad: string[] = []
+    for (const a of SAMPLES) {
+      for (const b of SAMPLES) {
+        for (const c of SAMPLES) {
+          const out = pangu(a + b + c)
+          if (/ {2,}/.test(out)) bad.push(`[${a}${b}${c}]`)
+        }
+      }
+    }
+    expect(bad).toEqual([])
+  })
+
+  test('右括号紧跟中文标点，中间不插空格', () => {
+    // 旧 bug 现场：`汉)` 被当成「汉字 + 汉字」，于是补出 `汉) 。`
+    for (const [input, forbidden] of [
+      ['（汉字)。', '汉) 。'],
+      ['汉字)。', '汉) 。'],
+      ['汉字)，然后', '汉) ，'],
+      ['汉字》。', '汉》 。'],
+      ['用 Proxy)。', 'y) 。'],
+    ] as const) {
+      expect(pangu(input)).not.toContain(forbidden)
+    }
+    // 成对半角括号夹中文仍会规整成全角
+    expect(pangu('(汉字)。')).toBe('（汉字）。')
+  })
+
+  test('首尾不留空格', () => {
+    for (const a of SAMPLES) {
+      expect(pangu(`  ${a}  `).trim()).toBe(pangu(a).trim())
+    }
+  })
+
+  test('汉字与拉丁字母之间补空格，标点不算汉字', () => {
+    expect(pangu('用Proxy替代')).toBe('用 Proxy 替代')
+    expect(pangu('用Proxy，')).toBe('用 Proxy，')
+    expect(pangu('（Proxy）')).toBe('（Proxy）')
+  })
+})
+
+describe('spaceUnits：单元流是唯一真源', () => {
+  test('不透明单元按内容首尾判定边界', () => {
+    const out = spaceUnits([
+      { text: '用', tok: 0 },
+      { text: 'Proxy', opaque: true, head: 'P', tail: 'y', tok: 1 },
+      { text: '替代', tok: 2 },
+    ])
+    expect(out.map((u) => u.text).join('')).toBe('用 Proxy 替代')
+  })
+
+  test('标点收尾的不透明单元后面不补空格', () => {
+    const out = spaceUnits([
+      { text: '见', tok: 0 },
+      { text: '文档，', opaque: true, head: '文', tail: '，', tok: 1 },
+      { text: '然后', tok: 2 },
+    ])
+    expect(out.map((u) => u.text).join('')).toBe('见文档，然后')
   })
 })

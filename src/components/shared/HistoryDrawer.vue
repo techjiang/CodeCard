@@ -1,8 +1,33 @@
 <script setup lang="ts">
+import { onBeforeUnmount, watch } from 'vue'
 import type { HistoryEntry } from '@/composables/useHistory'
 
-defineProps<{ open: boolean; entries: HistoryEntry[] }>()
+const props = defineProps<{ open: boolean; entries: HistoryEntry[] }>()
 const emit = defineEmits<{ close: []; restore: [entry: HistoryEntry]; remove: [id: string]; clear: [] }>()
+
+/**
+ * 抽屉是模态的：盖住整屏之后，键盘用户只能用 Esc 回来。
+ * 只挂在悬浮层上点关闭不够 —— 焦点不在抽屉里时键盘无从下手。
+ */
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    emit('close')
+  }
+}
+
+watch(
+  () => props.open,
+  (open) => {
+    if (typeof document === 'undefined') return
+    if (open) document.addEventListener('keydown', onKeydown)
+    else document.removeEventListener('keydown', onKeydown)
+  },
+)
+
+onBeforeUnmount(() => {
+  if (typeof document !== 'undefined') document.removeEventListener('keydown', onKeydown)
+})
 
 function formatTime(ts: number) {
   const d = new Date(ts)
@@ -13,7 +38,7 @@ function formatTime(ts: number) {
 
 <template>
   <div v-if="open" class="drawer-mask" @click.self="emit('close')">
-    <aside class="drawer">
+    <aside class="drawer" role="dialog" aria-modal="true" aria-label="历史记录">
       <header class="drawer__head">
         <h3>历史记录</h3>
         <div class="drawer__actions">

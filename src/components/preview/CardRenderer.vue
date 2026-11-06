@@ -48,8 +48,22 @@ const footerItems = computed(() => {
 </script>
 
 <template>
-  <div class="cc-content" :style="{ fontFamily: FONT_STACK[style.fontFamily], color: textColor, ...contentStyle }">
-    <header v-if="showTitle" class="cc-header">
+  <div
+    class="cc-content"
+    :style="{
+      fontFamily: FONT_STACK[style.fontFamily],
+      color: textColor,
+      /* 间距跟着字号走：写死 34px 时，字号被自适应缩到 20px，段间距还是 34 ——
+         等于每隔一段空出两行，竖版看着像「排到一半停了」 */
+      rowGap: `${Math.round(fontSize * 0.94)}px`,
+      ...contentStyle,
+    }"
+  >
+    <header
+      v-if="showTitle"
+      class="cc-header"
+      :style="{ rowGap: `${Math.round(fontSize * 0.28)}px` }"
+    >
       <h1 class="cc-title" :style="{ fontSize: `${Math.round(fontSize * 1.62)}px` }">{{ card.title }}</h1>
       <p v-if="showSubtitle" class="cc-subtitle" :style="{ fontSize: `${Math.round(fontSize * 0.72)}px`, color: mutedColor }">
         {{ card.subtitle }}
@@ -111,7 +125,6 @@ const footerItems = computed(() => {
 .cc-content {
   display: flex;
   flex-direction: column;
-  gap: 34px;
   /* 只能撑到容器宽度：flex 子项的 min-width 默认是 auto，写 100% 反而会被自己的内容顶宽，
      父级跟着被撑开，量出来的「可用宽度」就成了错的 */
   width: 100%;
@@ -123,7 +136,6 @@ const footerItems = computed(() => {
 .cc-header {
   display: flex;
   flex-direction: column;
-  gap: 10px;
 }
 .cc-title {
   margin: 0;

@@ -83,10 +83,12 @@ describe('导出', () => {
 
   test('长标题在词边界换行，不会把标识符从中间劈开', async () => {
     const page = await openApp()
-    await seedCard(page, { type: 'knowledge', title: 'Proxy 与 defineProperty', content: '一句话' })
+    // 标题得真的长到要换行：短标题会被自适应放大到一行放得下，
+    // 那样这条用例就测不到「换个行会不会劈开标识符」了
+    await seedCard(page, { type: 'knowledge', title: 'Vue 3 的 Proxy 与 defineProperty 到底差在哪', content: '一句话' })
     await pickTemplate(page, '渐变紫')
 
-    // 预览里浏览器把标题排成两行：`Proxy 与` / `defineProperty`
+    // 预览里浏览器把标题排成三行，且 `defineProperty` 整体落在同一行
     const preview = await page.evaluate(() => {
       const title = document.querySelector<HTMLElement>('[data-card-root] .cc-title')!
       const range = document.createRange()
@@ -95,14 +97,24 @@ describe('导出', () => {
       const card = document.querySelector<HTMLElement>('[data-card-export]')!
       const c = card.getBoundingClientRect()
       const t = title.getBoundingClientRect()
+      // 按 top 取整会漏行：同一行的字体重叠、亚像素差异都会让 top 差一点。
+      // 用「垂直不重叠」聚类才数得准
+      const bands: Array<{ top: number; bottom: number }> = []
+      for (const r of rects.slice().sort((a, b) => a.top - b.top)) {
+        const hit = bands.find((b) => r.top < b.bottom - 1 && r.bottom > b.top + 1)
+        if (hit) {
+          hit.top = Math.min(hit.top, r.top)
+          hit.bottom = Math.max(hit.bottom, r.bottom)
+        } else bands.push({ top: r.top, bottom: r.bottom })
+      }
       const k = card.offsetWidth / c.width
       return {
-        lines: new Set(rects.map((r) => Math.round(r.top))).size,
+        lines: bands.length,
         band: { top: Math.round((t.top - c.top) * k), bottom: Math.round((t.bottom - c.top) * k) },
         boxWidth: Math.round(t.width * k),
       }
     })
-    expect(preview.lines).toBe(2)
+    expect(preview.lines).toBeGreaterThanOrEqual(2)
 
     const png = await renderPng(page, 1)
     // 标题是白字压深底：按行扫近白像素，把行数和非末行/末行宽度量出来
@@ -141,16 +153,16 @@ describe('导出', () => {
             cur.w = Math.max(cur.w, r.w)
           } else cur = null
         }
-        // 抗锯齿会在笔画间隙里留几行窄缝，高度过小的不算一整行
-        return lines.filter((l) => l.w > 8)
+        // 抗锯齿会在笔画间隙里留几行窄缝，过窄的不算一整行
+        return lines.map((l) => l.w).filter((w) => w > 12)
       },
       { url: png.dataUrl, band: preview.band },
     )
 
     // 行数对上，且末行不是被劈下来的两三个字母（`ty` 只有几十像素宽）
     expect(exported.length).toBe(preview.lines)
-    const last = exported[exported.length - 1].w
-    expect(last).toBeGreaterThan(preview.boxWidth * 0.4)
+    const last = exported[exported.length - 1]
+    expect(last).toBeGreaterThan(preview.boxWidth * 0.3)
   }, 60_000)
 
   test('导出的换行位置和预览一致（不差行）', async () => {

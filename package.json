@@ -1,7 +1,7 @@
 {
   "name": "codecard",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -29,5 +29,22 @@
     "vite": "^6.0.5",
     "vitest": "^2.1.8",
     "vue-tsc": "^2.1.10"
-  }
+  },
+  "description": "输入代码或笔记，一键生成可分享的技术卡片。纯本地、离线、12 套模板。",
+  "homepage": "https://github.com/techjiang/CodeCard",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/techjiang/CodeCard.git"
+  },
+  "keywords": [
+    "vue3",
+    "vite",
+    "typescript",
+    "code-card",
+    "markdown",
+    "canvas",
+    "export",
+    "offline"
+  ],
+  "license": "MIT"
 }
